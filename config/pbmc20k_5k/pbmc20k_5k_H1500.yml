@@ -1,0 +1,13 @@
+h5ad_file: "/localscratch/schockalingam6/tmp/adata.20k.5k.h5ad"
+misi_data_file: "/localscratch/schockalingam6/tmp/adata.20k.5k.misidata.h5"
+puc_file: "/localscratch/schockalingam6/tmp/adata.20k.5k.1K500.par_puc.h5"
+pidc_file: "/localscratch/schockalingam6/tmp/adata.20k.5k.1K500.par_pidc.h5"
+samples_file: "/project/schockalingam6/gene_networks/acworth/ext/parensnet/config/hvg/hvg1K500.txt"
+nrounds: 8
+nsamples: 200
+nobs: 0
+nvars: 0
+mode: "samples_input"
+#mode: "puc2pidc"
+save_nodes: False
+save_node_pairs: True

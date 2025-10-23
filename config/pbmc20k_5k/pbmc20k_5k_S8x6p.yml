@@ -1,0 +1,12 @@
+h5ad_file: "/localscratch/schockalingam6/tmp/adata.20k.5k.h5ad"
+misi_data_file: "/localscratch/schockalingam6/tmp/adata.20k.5k.misidata.h5"
+puc_file: "/localscratch/schockalingam6/tmp/adata.20k.5k.S8x300_puc.h5"
+pidc_file: "/localscratch/schockalingam6/tmp/adata.20k.5k.S8x300_pidc.h5"
+nrounds: 8
+nsamples: 300
+nobs: 0
+nvars: 0
+#mode: "samples_ranges"
+mode: "puc2pidc"
+save_nodes: False
+save_node_pairs: True

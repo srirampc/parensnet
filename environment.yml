@@ -1,0 +1,31 @@
+name: parensnet
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.12
+  - pip
+  #
+  - basedpyright
+  - dask
+  - devtools
+  - jupyter
+  - mpi4py
+  - openmpi-mpicc
+  - numpy
+  - pandas
+  - polars
+  - pydantic
+  - pyyaml
+  - scikit-learn
+  - scipy
+  - tqdm
+  #
+  - pip:
+      - anndata
+      - arboreto
+      - lightgbm
+      - scanpy
+      - xgboost
+      - git+https://github.com/srirampc/codetiming
