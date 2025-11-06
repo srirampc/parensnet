@@ -7,6 +7,8 @@ NPFloat : t.TypeAlias = np.floating[t.Any]
 NPInteger : t.TypeAlias = np.integer[t.Any]
 NDFloatArray : t.TypeAlias = npt.NDArray[np.floating[t.Any]]
 NDIntArray : t.TypeAlias = npt.NDArray[np.integer[t.Any]]
+NDBoolArray : t.TypeAlias = npt.NDArray[np.bool]
+NDObjectArray : t.TypeAlias = npt.NDArray[np.object_]
 FloatT: t.TypeAlias = float | NPFloat 
 IntegerT: t.TypeAlias = int | NPInteger 
 NPDType: t.TypeAlias = npt.DTypeLike
@@ -36,3 +38,6 @@ class DataPair(t.Generic[T], t.NamedTuple):
 class DataPair2(t.Generic[T, U], t.NamedTuple):
     first: T
     second: U
+
+PUCTuple: t.TypeAlias = tuple[int, int, NPFloat]
+IDDTuple: t.TypeAlias =  DataPair2[NDIntArray, NDFloatArray] # tuple[NDFloatArray, NDIntArray]

@@ -7,6 +7,7 @@ nsamples: 200
 nobs: 0
 nvars: 0
 #mode: "samples_ranges"
-mode: "puc2pidc"
+mode: 
+  - "puc2pidc"
 save_nodes: False
 save_node_pairs: True

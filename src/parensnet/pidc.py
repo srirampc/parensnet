@@ -5,8 +5,10 @@ import h5py
 
 # from pydantic import BaseModel
 
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
 from abc import ABC, abstractmethod
+
+from numpy.typing import NDArray
 from .types import NDIntArray, NPFloat, NPInteger, NDFloatArray, NPDType
 from .types import FloatT, IntegerT, DiscretizerMethod, LogBase
 from .bayesian_blocks import block_bins
@@ -319,7 +321,7 @@ class PIDCInterface(ABC):
     ) -> FloatT:
         if by_nodes is None:
             by_nodes = range(self.nvariables)
-        red_val = self.float_dtype()(0)
+        red_val = np.float32(0).astype(self.float_dtype())
         for kby in by_nodes:
             if kby == i or kby == j:
                 continue
@@ -370,6 +372,17 @@ class PIDCInterface(ABC):
             red_dict[(i, k, j)] = rik
             red_dict[(j, k, i)] = rjk
         return red_dict
+
+    def minsum_list(self, about: int, target: int) -> NDFloatArray:
+        by_nodes: list[int] = list(
+            x for x in range(self.nvariables) if x != about and x != target
+        )
+        lmr_abtgt = self.get_lmr(about=about, by=target)
+        min_sum_list = np.array([
+            np.sum(np.minimum(lmr_abtgt, self.get_lmr(about=about, by=by)))
+            for by in by_nodes
+        ], self.float_dtype())
+        return min_sum_list
 
     def get_lmr_minsum(self, about:int, target:int) -> FloatT:
         by_nodes: list[int] = list(
@@ -536,84 +549,97 @@ class PIDCPairListData(PIDCInterface):
 @t.final
 class LMRDataStructure:
     nvars: int
-    about_dim: int
+    about: int
+    dim: int
     lmr_sorted: NDFloatArray
+    lmr_rank: NDIntArray 
     lmr_pfxsum: NDFloatArray
-    lmr_ranks: NDIntArray 
 
     def __init__(self, pidata: PIDCInterface, about:int):
         self.nvars = pidata.nvariables
-        self.about_dim = int(pidata.get_hist_dim(about))
-        lmr_size: int = self.about_dim * self.nvars
+        self.about = about
+        self.dim = int(pidata.get_hist_dim(about))
+        lmr_size: int = self.dim * self.nvars
         self.lmr_sorted = np.zeros(lmr_size, dtype=pidata.float_dtype())
         self.lmr_pfxsum = np.zeros(lmr_size, dtype=pidata.float_dtype())
-        self.lmr_ranks = np.zeros(lmr_size, dtype=pidata.int_dtype())
+        self.lmr_rank = np.zeros(lmr_size, dtype=pidata.int_dtype())
         self.__init_ds(pidata, about)
-        # self.__init_ds2(pidata, about)
 
-    # def __init_ds2(self, pidata: PIDCInterface, about: int):
-    #     nentries = self.nvars * self.about_dim
-    #     svlist = [(0, np.float32(0), 0) ] * nentries
-    #     idx: int = 0
-    #     for by in range(self.nvars):
-    #         lmr_ax = pidata.get_lmr(about, by)
-    #         for rs, lmrv in enumerate(lmr_ax):
-    #             svlist[idx] = (rs, lmrv, by)
-    #             idx += 1
-    #     svlist.sort()
-    #     for rs_start in range(0, nentries, self.about_dim):
-    #         rs_stop = rs_start + self.nvars
-    #         curr_sum = 0.0
-    #         for ix, (rs, svx, by) in enumerate(svlist[rs_start:rs_stop]):
-    #             rsbegin = rs * self.nvars
-    #             self.lmr_ranks[rsbegin + by] = ix
-    #             self.lmr_sorted[rsbegin + ix] = svx
-    #             self.lmr_pfxsum[rsbegin + ix] = curr_sum
-
-    def __update_ds(self, si_values_list: list[list[tuple[NPFloat, int]]]):
+    def _build_ds(self, si_values_list: list[NDArray[t.Any]]):
         for rs, si_values in enumerate(si_values_list):
             # print(si_values, rs, self.about_dim, rsbegin)
             rsbegin = rs * self.nvars
             curr_sum = 0.0
             for ix, (svx, by) in enumerate(si_values):
-                    curr_sum += svx
-                    self.lmr_ranks[rsbegin + by] = ix
-                    self.lmr_sorted[rsbegin + ix] = svx
-                    self.lmr_pfxsum[rsbegin + ix] = curr_sum
+                curr_sum += svx
+                self.lmr_rank[rsbegin + by] = ix
+                self.lmr_sorted[rsbegin + ix] = svx
+                self.lmr_pfxsum[rsbegin + ix] = curr_sum
 
-    def __init_si_values(self, pidata: PIDCInterface, about: int):
-        svlist = [list((np.float32(0),i) for i in range(self.nvars))] * self.about_dim
+    def _si_values_list(self, pidata: PIDCInterface, about: int):
+        vl_dtype = np.dtype([
+            ('v', self.lmr_sorted.dtype), ('i', self.lmr_rank.dtype)
+        ])
+        dvalue = np.float32(0).astype(self.lmr_sorted.dtype)
+        svlist = [
+            np.fromiter(
+                zip(itertools.repeat(dvalue), range(self.nvars)),
+                dtype=vl_dtype
+            )
+            for _ in range(self.dim)
+        ]
         for by in range(self.nvars):
             lmr_ax = pidata.get_lmr(about, by)
-            for rs in range(self.about_dim):
+            for rs in range(self.dim):
                 svlist[rs][by] = (lmr_ax[rs], by)
         return svlist
-        # return [
-        #     [
-        #         (pidata.lmr_value(about=about, by=by, rstate=rs), by) 
-        #         if by != about else (0.0, by)
-        #         for by in range(self.nvars)
-        #     ]
-        #     for rs in range(self.about_dim)
-        # ]
     
-    def __sort_si_values(self, si_values_list: list[list[tuple[NPFloat, int]]]):
-        return [sorted(si_values) for si_values in si_values_list]
+    def _sort_si_values(self, si_values_list: list[NDArray[t.Any]]):
+        for si_values in si_values_list:
+            si_values.sort()
+        return si_values_list
 
     def __init_ds(self, pidata: PIDCInterface, about: int):
         #
-        si_values_list = self.__init_si_values(pidata, about)
-        si_values_list = self.__sort_si_values(si_values_list)
-        self.__update_ds(si_values_list)
-         
-    def lmr_minsum(self, src:int):
-        rdsum = np.float32(0)
-        lmvalues = np.zeros(self.about_dim, np.float32)
-        lmsums = np.zeros(self.about_dim, np.float32)
-        for rs in range(self.about_dim):
+        si_values_list = self._si_values_list(pidata, about)
+        si_values_list = self._sort_si_values(si_values_list)
+        self._build_ds(si_values_list)
+
+    def minsum_list(self, src: int) -> NDFloatArray:
+        rstates = np.arange(self.dim)
+        rs_begin = np.multiply(rstates, self.nvars)
+        src_ranks = self.lmr_rank[np.add(rs_begin, src)]
+        src_locs = np.add(rs_begin, src_ranks)
+        lmr_lows = self.lmr_pfxsum[np.subtract(src_locs, 1)]
+        lmr_highs = np.multiply(
+            self.lmr_sorted[src_locs],
+            np.subtract(self.nvars - 1, src_ranks)
+        )
+        lmr_states = lmr_lows + lmr_highs
+        return lmr_states
+ 
+    def lmr_minsum_vec(self, src:int):
+        rstates = np.arange(self.dim)
+        rs_begin = np.multiply(rstates, self.nvars)
+        src_ranks = self.lmr_rank[np.add(rs_begin, src)]
+        src_locs = np.add(rs_begin, src_ranks)
+        lmr_lows = self.lmr_pfxsum[np.subtract(src_locs, 1)]
+        lmr_highs = np.multiply(
+            self.lmr_sorted[src_locs],
+            np.subtract(self.nvars - 1, src_ranks)
+        )
+        lmr_states = lmr_lows + lmr_highs
+        #return src_ranks, lmr_lows, lmr_highs, lmr_states
+        return np.sum(lmr_states)
+
+    def lmr_minsum_iter(self, src:int):
+        rdsum = np.float32(0).astype(self.lmr_sorted.dtype)
+        lmvalues = np.zeros(self.dim, self.lmr_sorted.dtype)
+        lmsums = np.zeros(self.dim, self.lmr_sorted.dtype)
+        for rs in range(self.dim):
             rsbegin = rs * self.nvars
-            lmrank = self.lmr_ranks[rsbegin + src]
-            lmlow = self.lmr_pfxsum[rsbegin + lmrank - 1]
+            lmrank = self.lmr_rank[rsbegin + src]
+            lmlow = self.lmr_pfxsum[rsbegin + lmrank- 1]
             lmhigh = (self.nvars - 1 - lmrank) * self.lmr_sorted[rsbegin + lmrank]
             lmvalues[rs] = lmhigh
             lmsums[rs] = lmlow
@@ -621,33 +647,42 @@ class LMRDataStructure:
         # print(lmvalues, lmsums)
         return rdsum
 
+    def lmr_minsum(self, src:int):
+        # print(lmvalues, lmsums)
+        return self.lmr_minsum_vec(src)
+
 @t.final
 class LMRSubsetDataStructure:
     nvars: int
-    about_dim: int
+    about: int
+    dim: int
     lmr_sorted: NDFloatArray
     lmr_pfxsum: NDFloatArray
-    lmr_ranks: NDIntArray
-    subset_lst: list[int]
+    lmr_rank: NDIntArray
+    subset_var: list[int]
     subset_map: dict[int, int]
+    pidata: PIDCInterface
 
     def __init__(
-        self, pidata: PIDCInterface,
+        self,
+        pidata: PIDCInterface,
         about:int,
-        subset_lst: list[int],
+        subset_var: list[int],
         subset_map: dict[int, int],
     ):
-        self.subset_lst = subset_lst
+        self.pidata = pidata
+        self.about = about
+        self.subset_var = subset_var
         self.subset_map = subset_map
         self.nvars = len(subset_map)
-        self.about_dim = int(pidata.get_hist_dim(about))
-        lmr_size: int = self.about_dim * len(subset_map)
+        self.dim = int(pidata.get_hist_dim(about))
+        lmr_size: int = self.dim * len(subset_map)
         self.lmr_sorted = np.zeros(lmr_size, dtype=pidata.float_dtype())
         self.lmr_pfxsum = np.zeros(lmr_size, dtype=pidata.float_dtype())
-        self.lmr_ranks = np.zeros(lmr_size, dtype=pidata.int_dtype())
+        self.lmr_rank = np.zeros(lmr_size, dtype=pidata.int_dtype())
         self.__init_ds(pidata, about)
 
-    def __update_ds(self, si_values_list: list[list[tuple[NPFloat, int]]]):
+    def _build_ds(self, si_values_list: list[NDArray[t.Any]]):
         for rs, si_values in enumerate(si_values_list):
             # print(si_values, rs, self.about_dim, rsbegin)
             rsbegin = rs * self.nvars
@@ -655,43 +690,76 @@ class LMRSubsetDataStructure:
             for ix, (svx, by_var) in enumerate(si_values):
                 by_idx = self.subset_map[by_var]
                 curr_sum += svx
-                self.lmr_ranks[rsbegin + by_idx] = ix
+                self.lmr_rank[rsbegin + by_idx] = ix
                 self.lmr_sorted[rsbegin + ix] = svx
                 self.lmr_pfxsum[rsbegin + ix] = curr_sum
 
-    def __init_si_values(self, pidata: PIDCInterface, about: int):
-        svlist = [[(np.float32(0), 0)] * self.nvars] * self.about_dim
+    def _si_values_list(self, pidata: PIDCInterface, about: int):
+        vl_dtype = np.dtype([
+            ('v', self.lmr_sorted.dtype), ('i', self.lmr_rank.dtype)
+        ])
+        dvalue = np.float32(0).astype(self.lmr_sorted.dtype)
+        svlist = [
+            np.fromiter(
+                zip(itertools.repeat(dvalue), range(self.nvars)),
+                dtype=vl_dtype
+            )
+            for _ in range(self.dim)
+        ]
         for by_var, by_idx in self.subset_map.items():
             lmr_ax = pidata.get_lmr(about, by_var)
-            for rs in range(self.about_dim):
-                svlist[rs][by_var] = (lmr_ax[rs], by_var)
+            for rs in range(self.dim):
+                svlist[rs][by_idx] = (lmr_ax[rs], by_var)
         return svlist
-        # return [
-        #     [
-        #         (pidata.lmr_value(about=about, by=by, rstate=rs), by) 
-        #         if by != about else (0.0, by)
-        #         for by in range(self.nvars)
-        #     ]
-        #     for rs in range(self.about_dim)
-        # ]
     
-    def __sort_si_values(self, si_values_list: list[list[tuple[NPFloat, int]]]):
-        return [sorted(si_values) for si_values in si_values_list]
+    def _sort_si_values(self, si_values_list: list[NDArray[t.Any]]):
+        for si_values in si_values_list:
+            si_values.sort()
+        return si_values_list
 
     def __init_ds(self, pidata: PIDCInterface, about: int):
         #
-        si_values_list = self.__init_si_values(pidata, about)
-        si_values_list = self.__sort_si_values(si_values_list)
-        self.__update_ds(si_values_list)
-         
-    def lmr_minsum(self, src_var:int):
-        src = self.subset_map[src_var]
-        rdsum = np.float32(0)
-        lmvalues = np.zeros(self.about_dim, np.float32)
-        lmsums = np.zeros(self.about_dim, np.float32)
-        for rs in range(self.about_dim):
+        si_values_list = self._si_values_list(pidata, about)
+        si_values_list = self._sort_si_values(si_values_list)
+        self._build_ds(si_values_list)
+   
+    def minsum_list(self, src_var: int) -> NDFloatArray:
+        src_idx = self.subset_map[src_var]
+        rstates = np.arange(self.dim)
+        rs_begin = np.multiply(rstates, self.nvars)
+        src_ranks = self.lmr_rank[np.add(rs_begin, src_idx)]
+        src_locs = np.add(rs_begin, src_ranks)
+        lmr_lows = self.lmr_pfxsum[np.subtract(src_locs, 1)]
+        lmr_highs = np.multiply(
+            self.lmr_sorted[src_locs],
+            np.subtract(self.nvars - 1, src_ranks)
+        )
+        lmr_states = lmr_lows + lmr_highs
+        return lmr_states
+ 
+    def lmr_minsum_stvec(self, src_var:int):
+        src_idx = self.subset_map[src_var]
+        rstates = np.arange(self.dim)
+        rs_begin = np.multiply(rstates, self.nvars)
+        src_ranks = self.lmr_rank[np.add(rs_begin, src_idx)]
+        src_locs = np.add(rs_begin, src_ranks)
+        lmr_lows = self.lmr_pfxsum[np.subtract(src_locs, 1)]
+        lmr_highs = np.multiply(
+            self.lmr_sorted[src_locs],
+            np.subtract(self.nvars - 1, src_ranks)
+        )
+        lmr_states = lmr_lows + lmr_highs
+        #return src_ranks, lmr_lows, lmr_highs, lmr_states
+        return np.sum(lmr_states)
+
+    def lmr_minsum_stiter(self, src_var:int):
+        src_idx = self.subset_map[src_var]
+        rdsum = np.float32(0).astype(self.lmr_sorted.dtype)
+        lmvalues = np.zeros(self.dim, self.lmr_sorted.dtype)
+        lmsums = np.zeros(self.dim, self.lmr_sorted.dtype)
+        for rs in range(self.dim):
             rsbegin = rs * self.nvars
-            lmrank = self.lmr_ranks[rsbegin + src]
+            lmrank = self.lmr_rank[rsbegin + src_idx]
             lmlow = self.lmr_pfxsum[rsbegin + lmrank - 1]
             lmhigh = (self.nvars - 1 - lmrank) * self.lmr_sorted[rsbegin + lmrank]
             lmvalues[rs] = lmhigh
@@ -699,3 +767,54 @@ class LMRSubsetDataStructure:
             rdsum += lmlow + lmhigh
         # print(lmvalues, lmsums)
         return rdsum
+
+    def lmr_minsum_rxiter(self, src_var:int) -> FloatT:
+        lmd = self.pidata.get_lmr(self.about, src_var)
+        rdsum = np.float32(0).astype(self.lmr_sorted.dtype)
+        for rs in range(self.dim):
+            lmv = lmd[rs] 
+            rsbegin = rs * self.nvars
+            rsend = rsbegin +  self.nvars
+            # Find rank of lmv in 
+            lmrank = np.searchsorted(
+                self.lmr_sorted[range(rsbegin, rsend)],
+                lmv
+            )
+            lmlow = self.lmr_pfxsum[rsbegin + lmrank - 1] if lmrank > 0 else 0.0
+            lmhigh = (self.nvars - lmrank) * lmv
+            rdsum += lmlow + lmhigh
+        return rdsum
+
+    def lmr_minsum_rxvec(self, src_var:int) -> FloatT:
+        lm_vec = self.pidata.get_lmr(self.about, src_var)
+        #
+        rstates = np.arange(self.dim)
+        rs_begin = np.multiply(rstates, self.nvars)
+        rs_end = np.add(rs_begin, self.nvars)
+        #
+        rnk_gen: Generator[int] = (
+            np.searchsorted(self.lmr_sorted[range(rsb, rse)], lmv)
+            for (rsb, rse, lmv) in zip(rs_begin, rs_end, lm_vec)
+        )
+        src_ranks = np.fromiter(rnk_gen, dtype=np.int32)
+        src_locs = np.add(rs_begin, src_ranks)
+        lmr_lows = np.zeros(src_locs.size, dtype=self.lmr_sorted.dtype)
+        ll_locs = src_locs > 0
+        lmr_lows[ll_locs] = self.lmr_pfxsum[np.subtract(src_locs[ll_locs], 1)]
+        lmr_highs = np.multiply(lm_vec, np.subtract(self.nvars, src_ranks))
+        lmr_states = lmr_lows + lmr_highs
+        rdsum = np.sum(lmr_states).astype(self.lmr_sorted.dtype)
+        return rdsum
+
+    def lmr_minsum_iter(self, src_var:int):
+        if src_var in self.subset_map:
+            return self.lmr_minsum_stiter(src_var)
+        return self.lmr_minsum_rxiter(src_var)
+
+    def lmr_minsum_vec(self, src_var:int):
+        if src_var in self.subset_map:
+            return self.lmr_minsum_stvec(src_var)
+        return self.lmr_minsum_rxvec(src_var)
+
+    def lmr_minsum(self, src_var:int):
+        return self.lmr_minsum_vec(src_var)

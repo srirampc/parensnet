@@ -1,25 +1,28 @@
+import argparse
+import logging
 import time, itertools
 import typing as t
-import pydantic
-import dask.delayed, dask.bag as db
+import h5py
+import dask.bag as db
 import numpy as np, anndata as an
 
 from collections.abc import Iterable
-from .pidc import PIDCNode, PIDCPair, PIDCPairListData
-from .misi import MISIData, MISIDataH5
-from .types import DiscretizerMethod, LogBase, NDFloatArray, NPDType
-from .util import NDIntArray
+from devtools import pformat
+from codetiming import Timer
+
+from ..comm_interface import IDComm
+from ..context import get_clr_weight
+
+from ..workflow.util import InputArgs, iddtuple_to_h5
+from ..pidc import PIDCNode, PIDCPair, PIDCPairListData
+from ..misi import MISIDataH5
+from ..types import DiscretizerMethod, IDDTuple, LogBase, NDFloatArray, NPDType, DataPair
+
+from ..util import NDIntArray
 #
 
-class InputArgs(pydantic.BaseModel):
-    h5ad_file: str = "./data/pbmc20k/adata.20k.5k.h5ad"
-    misi_data: str = "/localscratch/schockalingam6/tmp/adata.20k.5k.misidata.h5"
-    puc_output: str = "/localscratch/schockalingam6/tmp/adata.20k.5k.puc.h5"
-    nrounds: int = 8
-    nsamples: int = 200
-    nvariables: int = 5000 
-    npairs: int | None = None
-
+def _log():
+    return logging.getLogger(__name__)
 
 def compute_nodes(
     data_list: list[NDFloatArray],
@@ -243,9 +246,137 @@ class DaskWorkflow:
         self.dask_run_times['pairs_list'] = (end_tx - start_tx, start_tx, end_tx) 
         return pdpairsl
 
-# exp_data = an.read_h5ad(H5AD_FILE)
-# adata = np.round(exp_data.X, 4) # pyright: ignore[reportCallIssue, reportArgumentType]
-# ndata, nvariables = adata.shape
-# data_list = [adata[:, ix] for ix in range(adata.shape[1])]
-# pair_list = [(i, j) for i, j in itertools.combinations(range(nvariables), 2)]
+def misi_workflow(mxargs: InputArgs):
+    dflow = DaskWorkflow.from_h5ad(
+        mxargs.h5ad_file, mxargs.nobs, mxargs.nvars, mxargs.nroundup
+    )
+    dflow.build_nodes()
+    dflow.build_node_pairs()
+    # TODO:: save the node pairs as misi
 
+    # exp_data = an.read_h5ad(mxargs.h5ad_file)
+    # adata = np.round(exp_data.X, mxargs.nroundup)
+    # ndata, nvariables = adata.shape
+    # data_list = [adata[:, ix] for ix in range(adata.shape[1])]
+    # pair_list = [(i, j) for i, j in itertools.combinations(range(nvariables), 2)]
+
+class PUCUnionWorkflow:
+    mxargs: InputArgs
+    union_mat: NDFloatArray
+    dtype: NPDType
+    int_dtype: NPDType
+    nindices: NDIntArray
+
+    @Timer(name="PUCUnionWorkflow::__init__", logger=None)
+    def __init__(self, mxargs: InputArgs) -> None:
+        self.mxargs = mxargs
+        first_file = mxargs.sub_net_files[0]
+        #
+        with h5py.File(first_file) as hfptr:
+            rindex: NDIntArray = hfptr["/data/index"] # pyright: ignore[reportAssignmentType]
+            rpuc: NDFloatArray = hfptr["/data/puc"] # pyright: ignore[reportAssignmentType]
+            self.nindices = rindex[:]
+            self.dtype = rpuc.dtype
+            self.int_dtype = rindex.dtype
+        #
+        self.union_mat = np.zeros((mxargs.nvars, mxargs.nvars),
+                                  self.dtype)
+ 
+    @Timer(name="PUCUnionWorkflow::run", logger=None)
+    def run(self):
+        if mxargs.sub_net_files is None:
+            return
+        #
+        for puc_file in mxargs.sub_net_files:
+            with h5py.File(puc_file) as hfptr:
+                rindex: NDIntArray = hfptr["/data/index"][:] # pyright: ignore[reportIndexIssue, reportAssignmentType]
+                rpuc: NDFloatArray = hfptr["/data/puc"][:] # pyright: ignore[reportIndexIssue, reportAssignmentType]
+                self.union_mat[rindex[:, 0], rindex[:, 1]] += rpuc
+                self.union_mat[rindex[:, 1], rindex[:, 0]] += rpuc
+        nfiles = len(mxargs.sub_net_files)
+        self.union_mat = self.union_mat/np.float64(nfiles).astype(self.dtype)
+        union_puc = self.union_mat[self.nindices[:, 0], self.nindices[:, 1]]   
+        iddtuple_to_h5(
+            IDDTuple(self.nindices, union_puc),
+            self.mxargs.puc_file,
+            DataPair[str]("index", "puc"),
+            "data"
+        )
+
+class ContextWorkflow:
+    mxargs: InputArgs
+    puc_mat: NDFloatArray
+    nindices: NDIntArray
+    dtype: NPDType
+    int_dtype: NPDType
+
+    @Timer(name="ContextWorkflow::__init__", logger=None)
+    def __init__(self, mxargs: InputArgs) -> None:
+        self.mxargs = mxargs
+
+        with h5py.File(self.mxargs.puc_file) as hfptr:
+            rindex: NDIntArray = hfptr["/data/index"][:] # pyright: ignore[reportIndexIssue, reportAssignmentType]
+            rpuc: NDFloatArray = hfptr["/data/puc"][:] # pyright: ignore[reportIndexIssue, reportAssignmentType]
+            self.dtype = rpuc.dtype
+            self.int_dtype = rindex.dtype
+            self.nindices = rindex[:]
+            self.puc_mat = np.zeros((mxargs.nvars, mxargs.nvars),
+                                    self.dtype)
+            self.puc_mat[rindex[:, 0], rindex[:, 1]] = rpuc
+            self.puc_mat[rindex[:, 1], rindex[:, 0]] = rpuc
+
+    def compute_context(self) -> IDDTuple:
+        bats_pidc = IDDTuple(-np.ones((1,2), dtype=np.int32),
+                                 np.zeros(1, np.float32))
+        px_pidc = np.zeros(self.nindices.shape[0], self.dtype)
+        rindex = 0
+        for rx, cx in self.nindices:
+            px_pidc[rindex] = get_clr_weight(self.puc_mat, rx, cx)
+            rindex += 1
+        bats_pidc = IDDTuple(self.nindices, px_pidc)
+        return bats_pidc
+
+    @Timer(name="ContextWorkflow::run", logger=None)
+    def run(self):
+        pidc_tuple = self.compute_context()
+        #
+        iddtuple_to_h5(pidc_tuple, self.mxargs.pidc_file,
+                       DataPair[str]("index", "pidc"), "data")
+        
+
+
+def main(mxargs: InputArgs):
+    comm_ifx  = IDComm()
+    print(
+        pformat(
+            mxargs.model_dump(exclude=["h5_fptr"])  # pyright: ignore[reportArgumentType]
+        )
+    )
+    for rxmode in mxargs.mode:
+        match rxmode:
+            case 'misi':
+                misi_workflow(mxargs)
+            case 'puc_union':
+                PUCUnionWorkflow(mxargs).run()
+            case 'puc2pidc':
+                ContextWorkflow(mxargs).run()
+            case _:
+                print("not implmented")
+    if mxargs.enable_timers:
+        comm_ifx.barrier()
+        comm_ifx.log_profile_summary(_log(), logging.DEBUG)
+
+if __name__ == "__main__":
+   parser = argparse.ArgumentParser(
+       prog="misi_data",
+       description="Generate GRNs w. PIDC for Single Cell Data"
+   )
+   parser.add_argument(
+       "yaml_file",
+       default="./config/networks/pbmc20k_5k.yaml",
+       help=f"Yaml Input file with a given configuration."
+   )
+   run_args = parser.parse_args()
+   print("Run Arguments :: ", run_args)
+   with InputArgs.from_yaml(run_args.yaml_file) as mxargs:
+       main(mxargs)

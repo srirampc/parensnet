@@ -4,7 +4,7 @@ import numpy as np
 import h5py
 
 from collections.abc import Iterable
-from .pidc import PIDCInterface, PIDCNode, PIDCPair
+from .pidc import LMRSubsetDataStructure, PIDCInterface, PIDCNode, PIDCPair
 from .pidc import LMRDataStructure, PIDCPairData, PIDCPairListData
 from .util import create_h5ds, triu_pair_to_index, flatten_npalist
 from .types import DiscretizerMethod, LogBase, FloatT, IntegerT, DataPair
@@ -314,14 +314,13 @@ class MISIData(PIDCInterface):
         with h5py.File(h5_file, 'r') as fptr:
             misiobj = cls()
             data_grp : h5py.Group = t.cast(h5py.Group, fptr["data"])
-            misiobj.disc_method = t.cast(DiscretizerMethod,
-                                         data_grp.attrs["disc_method"])
-            misiobj.tbase       = t.cast(LogBase, data_grp.attrs["tbase"])
-            misiobj.nvars       = t.cast(int, data_grp.attrs["nvars"])
-            misiobj.nobs        = t.cast(int, data_grp.attrs["nobs"])
-            misiobj.npairs      = t.cast(int, data_grp.attrs["npairs"])
-            misiobj.nsjv_dim    = t.cast(int, data_grp.attrs["nsjv_dim"])
-            misiobj.nsi         = t.cast(int, data_grp.attrs["nsi"])
+            misiobj.disc_method = data_grp.attrs["disc_method"] # pyright: ignore[reportAttributeAccessIssue]
+            misiobj.tbase       = data_grp.attrs["tbase"] # pyright: ignore[reportAttributeAccessIssue]
+            misiobj.nvars       = int(data_grp.attrs["nvars"])  # pyright: ignore[reportArgumentType]
+            misiobj.nobs        = int(data_grp.attrs["nobs"])  # pyright: ignore[reportArgumentType]
+            misiobj.npairs      = int(data_grp.attrs["npairs"])  # pyright: ignore[reportArgumentType]
+            misiobj.nsjv_dim    = int(data_grp.attrs["nsjv_dim"])  # pyright: ignore[reportArgumentType]
+            misiobj.nsi         = int(data_grp.attrs["nsi"])  # pyright: ignore[reportArgumentType]
             misiobj.hist_dim   = data_grp["hist_dim"][:]    # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
             misiobj.hist_start = data_grp["hist_start"][:]  # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
             misiobj.hist       = data_grp["hist"][:]  # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
@@ -456,14 +455,13 @@ class MISIDataH5(PIDCInterface):
         self.h5_fptr = None
         with h5py.File(h5_file, 'r') as fptr:
             data_grp : h5py.Group = t.cast(h5py.Group, fptr["data"])
-            self.disc_method = t.cast(DiscretizerMethod,
-                                      data_grp.attrs["disc_method"])
-            self.tbase       = t.cast(LogBase, data_grp.attrs["tbase"])
-            self.nvars       = t.cast(int, data_grp.attrs["nvars"])
-            self.nobs        = t.cast(int, data_grp.attrs["nobs"])
-            self.npairs      = t.cast(int, data_grp.attrs["npairs"])
-            self.nsjv_dim    = t.cast(int, data_grp.attrs["nsjv_dim"])
-            self.nsi         = t.cast(int, data_grp.attrs["nsi"])
+            self.disc_method = data_grp.attrs["disc_method"] # pyright: ignore[reportAttributeAccessIssue]
+            self.tbase       = data_grp.attrs["tbase"] # pyright: ignore[reportAttributeAccessIssue]
+            self.nvars       = int(data_grp.attrs["nvars"])  # pyright: ignore[reportArgumentType]
+            self.nobs        = int(data_grp.attrs["nobs"])   # pyright: ignore[reportArgumentType]
+            self.npairs      = int(data_grp.attrs["npairs"])  # pyright: ignore[reportArgumentType]
+            self.nsjv_dim    = int(data_grp.attrs["nsjv_dim"]) # pyright: ignore[reportArgumentType]
+            self.nsi         = int(data_grp.attrs["nsi"])  # pyright: ignore[reportArgumentType]
             if load_cache:
                 self.__load_cache(data_grp)
         if open_mode:
@@ -787,11 +785,14 @@ class MISIRangePair(PIDCInterface):
     si: DataPair[NDFloatArray]
     lmr: DataPair[NDFloatArray]
     #
-    lmr_ds: DataPair[list[LMRDataStructure]]
+    lmr_ds: DataPair[list[LMRDataStructure] | list[LMRSubsetDataStructure]]
     #
     ftype: NPDType = np.float32
     itype: NPDType = np.int32
     idx_type: NPDType = np.int64
+    #
+    subset_var: list[int] = []
+    subset_map: dict[int, int] = {}
 
 
     def __init__(
@@ -799,7 +800,8 @@ class MISIRangePair(PIDCInterface):
         h5_file: str,
         st_ranges: tuple[range, range],
         mi_cache: NDFloatArray | None,
-        load_ds_flag: bool = False
+        load_ds_flag: bool = False,
+        subset_var: list[int] | None = None,
     ):
         super().__init__()
         src_range, tgt_range = st_ranges
@@ -807,11 +809,11 @@ class MISIRangePair(PIDCInterface):
         self.h5_file = h5_file
         with h5py.File(h5_file) as fptr:
             data_grp : h5py.Group = t.cast(h5py.Group, fptr["data"])
-            self.nvars       = t.cast(int, data_grp.attrs["nvars"])
-            self.nobs        = t.cast(int, data_grp.attrs["nobs"])
-            self.npairs      = t.cast(int, data_grp.attrs["npairs"])
-            self.nsjv_dim    = t.cast(int, data_grp.attrs["nsjv_dim"])
-            self.nsi         = t.cast(int, data_grp.attrs["nsi"])
+            self.nvars       = int(data_grp.attrs["nvars"])   # pyright: ignore[reportArgumentType]
+            self.nobs        = int(data_grp.attrs["nobs"])   # pyright: ignore[reportArgumentType]
+            self.npairs      = int(data_grp.attrs["npairs"])  # pyright: ignore[reportArgumentType]
+            self.nsjv_dim    = int(data_grp.attrs["nsjv_dim"]) # pyright: ignore[reportArgumentType]
+            self.nsi         = int(data_grp.attrs["nsi"]) # pyright: ignore[reportArgumentType]
 
             self.hist_dim  = DataPair(
                 data_grp["hist_dim"][src_range],    # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
@@ -878,14 +880,32 @@ class MISIRangePair(PIDCInterface):
         self.range_si_start = DataPair(fi_hdim * self.nvars,
                                        se_hdim * self.nvars) 
         self.lmr_ds  = DataPair([],[])
+        if subset_var:
+            self.subset_var = subset_var
+            self.nsubsets = len(subset_var)
+            self.subset_map = dict(zip(subset_var, range(self.nsubsets)))
         if load_ds_flag:
             self._load_ds()
 
     def _load_ds(self):
-        self.lmr_ds  = DataPair(
-            [LMRDataStructure(self, int(ix)) for ix in self.st_ranges.first],
-            [LMRDataStructure(self, int(jx)) for jx in self.st_ranges.second]
-        )
+        if self.subset_var:
+            self.lmr_ds  = DataPair(
+                [
+                    LMRSubsetDataStructure(self, int(ix),
+                                           self.subset_var, self.subset_map)
+                    for ix in self.st_ranges.first
+                ],
+                [
+                    LMRSubsetDataStructure(self, int(jx),
+                                           self.subset_var, self.subset_map)
+                    for jx in self.st_ranges.second
+                ]
+            )
+        else:
+            self.lmr_ds  = DataPair(
+                [LMRDataStructure(self, int(ix)) for ix in self.st_ranges.first],
+                [LMRDataStructure(self, int(jx)) for jx in self.st_ranges.second]
+            )
 
     @t.override
     def float_dtype(self) -> NPDType:
@@ -1026,7 +1046,7 @@ class MISIRangePair(PIDCInterface):
         isi_byj = fsi_vec[ibj_bounds.start: ibj_bounds.stop]
         jsi_byi = ssi_vec[jbi_bounds.start: jbi_bounds.stop]
         # 
-        red_value = self.float_dtype()(0.0)
+        red_value = np.float64(0.0).astype(self.float_dtype())
         for kby in by_nodes:
             if kby == i or kby == j:
                 continue

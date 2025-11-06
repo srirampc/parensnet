@@ -1,0 +1,26 @@
+h5ad_file: "/localscratch/schockalingam6/tmp/pbmc20k.2500/adata.20k.2500.h5ad"
+misi_data_file: "/localscratch/schockalingam6/tmp/pbmc20k.2500/adata.20k.2500.misidata.h5"
+puc_file: "/localscratch/schockalingam6/tmp/pbmc20k.2500/adata.20k.2500.SQunionx30_puc.h5"
+pidc_file: "/localscratch/schockalingam6/tmp/pbmc20k.2500/adata.20k.2500.SQunionx30_pidc.h5"
+sub_net_files:
+  - "/localscratch/schockalingam6/tmp/pbmc20k.2500/adata.20k.2500.S6x4p.par_puc.h5"
+  - "/localscratch/schockalingam6/tmp/pbmc20k.2500/adata.20k.2500.S8x4p.par_puc.h5"
+  - "/localscratch/schockalingam6/tmp/pbmc20k.2500/adata.20k.2500.S10x4p.par_puc.h5"
+  - "/localscratch/schockalingam6/tmp/pbmc20k.2500/adata.20k.2500.S6x5p.par_puc.h5"
+  - "/localscratch/schockalingam6/tmp/pbmc20k.2500/adata.20k.2500.S8x5p.par_puc.h5"
+  - "/localscratch/schockalingam6/tmp/pbmc20k.2500/adata.20k.2500.S10x5p.par_puc.h5"
+  - "/localscratch/schockalingam6/tmp/pbmc20k.2500/adata.20k.2500.S6x6p.par_puc.h5"
+  - "/localscratch/schockalingam6/tmp/pbmc20k.2500/adata.20k.2500.S8x6p.par_puc.h5"
+  - "/localscratch/schockalingam6/tmp/pbmc20k.2500/adata.20k.2500.S10x6p.par_puc.h5"
+  #- "/localscratch/schockalingam6/tmp/pbmc20k.2500/adata.20k.2500.S6x300_puc.h5"
+nrounds: 6
+nsamples: 200
+nobs: 0
+nvars: 0
+#mode: "samples_ranges"
+mode:
+  - "puc_union"
+  - "puc2pidc"
+quantile_filter: 0.3
+save_nodes: False
+save_node_pairs: True
