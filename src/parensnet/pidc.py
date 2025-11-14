@@ -39,7 +39,7 @@ class PIDCNode:
     def compute_hist_for(
         data: NDFloatArray,
         nobs: int | None,
-        method: DiscretizerMethod,
+        _method: DiscretizerMethod,
         dtype: NPDType,
         int_dtype: NPDType,
     ):
@@ -53,19 +53,21 @@ class PIDCNode:
         data: NDFloatArray,
         nobs: int | None,
         nvars: int | None,
-        method: DiscretizerMethod,
+        _method: DiscretizerMethod,
         dtype: NPDType,
         int_dtype: NPDType,
     ):
-        nobs = nobs if nobs else data.shape[0]
-        nvars = nvars if nvars else data.shape[1]
+        if nobs is None:
+            nobs = data.shape[0]
+        if nvars is None:
+            nvars = data.shape[1]
         bins_list = [
             block_bins(data[:nobs, vx], dtype)
-            for vx in range(nvars)
+            for vx in range(nvars)  # pyright: ignore[reportArgumentType]
         ]
         hist_list = [
             (np.histogram(data[:nobs, vx], bins=bins_list[vx])[0]).astype(int_dtype)
-            for vx in range(nvars)
+            for vx in range(nvars)  # pyright: ignore[reportArgumentType]
         ]
         return bins_list, hist_list
 
@@ -88,8 +90,8 @@ class PIDCNode:
 class PIDCPair:
     method: DiscretizerMethod = "bayesian_blocks"
     tbase: LogBase = '2'
-    sthist: NDFloatArray = np.array(())
-    ljvi: NDFloatArray = np.array(())
+    sthist: NDFloatArray | None = None
+    ljvi: NDFloatArray | None = None
     x_si: NDFloatArray = np.array(())
     y_si: NDFloatArray = np.array(())
     x_lmr: NDFloatArray = np.array(())
@@ -100,8 +102,8 @@ class PIDCPair:
         self,
         method: DiscretizerMethod,
         tbase: LogBase,
-        sthist: NDFloatArray,
-        ljvi: NDFloatArray,
+        sthist: NDFloatArray | None,
+        ljvi: NDFloatArray | None,
         mi: float | NPFloat,
         sis: tuple[NDFloatArray, NDFloatArray],
         lmrs: tuple[NDFloatArray, NDFloatArray],
@@ -114,12 +116,13 @@ class PIDCPair:
         self.x_si, self.y_si = sis
         self.x_lmr, self.y_lmr = lmrs
 
-
     def compute_x_lmr(self, nobs: FloatT | None):
-        return LMR.about_x_from_ljvi(self.ljvi, self.sthist, nobs)
+        if (self.ljvi is not None) and (self.sthist is not None):
+            return LMR.about_x_from_ljvi(self.ljvi, self.sthist, nobs)
 
     def compute_y_lmr(self, nobs: FloatT | None):
-        return LMR.about_y_from_ljvi(self.ljvi, self.sthist, nobs)
+        if (self.ljvi is not None) and (self.sthist is not None):
+            return LMR.about_y_from_ljvi(self.ljvi, self.sthist, nobs)
 
     @classmethod
     def from_nodes(
@@ -129,6 +132,7 @@ class PIDCPair:
         tbase: LogBase,
         dtype: NPDType,
         int_dtype: NPDType,
+        save_hist:bool = True,
     ) -> "PIDCPair":
         xnode, ynode = fnodes
         xdata, ydata = fdata
@@ -142,6 +146,7 @@ class PIDCPair:
             method=xnode.method,
             dtype=dtype,
             int_dtype=int_dtype,
+            save_hist=save_hist,
         )
 
     @classmethod
@@ -154,6 +159,7 @@ class PIDCPair:
         method: DiscretizerMethod,
         dtype: NPDType,
         int_dtype: NPDType,
+        save_hist:bool = True,
     ):
         xdata, xbins, xhist = ixnode
         ydata, ybins, yhist = iynode
@@ -167,12 +173,20 @@ class PIDCPair:
             mi = MI.from_ljvi(ljvi, sthist, fwt)
             x_si, y_si = SI.from_ljvi(ljvi, sthist, xhist, yhist)
             x_lmr, y_lmr = LMR.from_ljvi(ljvi, sthist, fwt)
+        if save_hist is False:
+            del sthist
+            del ljvi
+            sthist = None
+            ljvi = None
+        else:
+            sthist = sthist.astype(int_dtype)
+            ljvi = ljvi.astype(dtype)
         #
         return cls(
             method=method,
             tbase=tbase,
-            sthist=sthist.astype(int_dtype),
-            ljvi=ljvi.astype(dtype),
+            sthist=sthist,
+            ljvi=ljvi,
             mi=mi.astype(dtype),
             sis=(x_si.astype(dtype), y_si.astype(dtype)),
             lmrs=(x_lmr.astype(dtype), y_lmr.astype(dtype)),
@@ -187,6 +201,7 @@ class PIDCPair:
         tbase: LogBase,
         dtype: NPDType,
         int_dtype: NPDType,
+        save_hist: bool = True,
     ) -> dict[tuple[int, int], "PIDCPair"]:
         nvars = len(nodes) if nvars is None else nvars
         assert nvars <= len(nodes)
@@ -197,6 +212,7 @@ class PIDCPair:
                 tbase,
                 dtype,
                 int_dtype,
+                save_hist,
             )
             for ix, iy in itertools.combinations(range(nvars), 2)
         }
@@ -402,7 +418,7 @@ class PIDCInterface(ABC):
             ( (mi_factor - self.get_lmr_minsum(i, j)) / mij ) +
             ( (mi_factor - self.get_lmr_minsum(j, i)) / mij )
         )
-    
+ 
 
 class PIDCPairListData(PIDCInterface):
     disc_method: DiscretizerMethod = "bayesian_blocks"
@@ -435,7 +451,7 @@ class PIDCPairListData(PIDCInterface):
         self.nobs   =  nobs
         self.npairs =  npairs
         #
-        self.data = np.array(()) if data is None else data 
+        self.data = np.array(()) if data is None else data
         self.nodes = nodes
         self.node_pairs = node_pairs
 
@@ -518,10 +534,11 @@ class PIDCPairListData(PIDCInterface):
         tbase: LogBase,
         dtype: NPDType,
         int_dtype: NPDType,
+        save_hist: bool = True,
     ):
         nobs, nvars = shape
         nodes = PIDCNode.from_data(data, nvars, nobs, dmethod, dtype, int_dtype)
-        node_pairs = PIDCPair.from_data(nodes, data, nvars, tbase, dtype, int_dtype)
+        node_pairs = PIDCPair.from_data(nodes, data, nvars, tbase, dtype, int_dtype, save_hist)
         return PIDCPairListData(
             disc_method=dmethod,
             tbase=tbase,
@@ -552,7 +569,7 @@ class LMRDataStructure:
     about: int
     dim: int
     lmr_sorted: NDFloatArray
-    lmr_rank: NDIntArray 
+    lmr_rank: NDIntArray
     lmr_pfxsum: NDFloatArray
 
     def __init__(self, pidata: PIDCInterface, about:int):
@@ -593,7 +610,7 @@ class LMRDataStructure:
             for rs in range(self.dim):
                 svlist[rs][by] = (lmr_ax[rs], by)
         return svlist
-    
+ 
     def _sort_si_values(self, si_values_list: list[NDArray[t.Any]]):
         for si_values in si_values_list:
             si_values.sort()
@@ -617,7 +634,7 @@ class LMRDataStructure:
         )
         lmr_states = lmr_lows + lmr_highs
         return lmr_states
- 
+
     def lmr_minsum_vec(self, src:int):
         rstates = np.arange(self.dim)
         rs_begin = np.multiply(rstates, self.nvars)
@@ -711,7 +728,7 @@ class LMRSubsetDataStructure:
             for rs in range(self.dim):
                 svlist[rs][by_idx] = (lmr_ax[rs], by_var)
         return svlist
-    
+ 
     def _sort_si_values(self, si_values_list: list[NDArray[t.Any]]):
         for si_values in si_values_list:
             si_values.sort()
@@ -722,7 +739,7 @@ class LMRSubsetDataStructure:
         si_values_list = self._si_values_list(pidata, about)
         si_values_list = self._sort_si_values(si_values_list)
         self._build_ds(si_values_list)
-   
+
     def minsum_list(self, src_var: int) -> NDFloatArray:
         src_idx = self.subset_map[src_var]
         rstates = np.arange(self.dim)
@@ -736,7 +753,7 @@ class LMRSubsetDataStructure:
         )
         lmr_states = lmr_lows + lmr_highs
         return lmr_states
- 
+
     def lmr_minsum_stvec(self, src_var:int):
         src_idx = self.subset_map[src_var]
         rstates = np.arange(self.dim)
@@ -772,10 +789,10 @@ class LMRSubsetDataStructure:
         lmd = self.pidata.get_lmr(self.about, src_var)
         rdsum = np.float32(0).astype(self.lmr_sorted.dtype)
         for rs in range(self.dim):
-            lmv = lmd[rs] 
+            lmv = lmd[rs]
             rsbegin = rs * self.nvars
             rsend = rsbegin +  self.nvars
-            # Find rank of lmv in 
+            # Find rank of lmv in
             lmrank = np.searchsorted(
                 self.lmr_sorted[range(rsbegin, rsend)],
                 lmv

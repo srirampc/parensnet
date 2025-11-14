@@ -9,7 +9,7 @@ from .pidc import LMRDataStructure, PIDCPairData, PIDCPairListData
 from .util import create_h5ds, triu_pair_to_index, flatten_npalist
 from .types import DiscretizerMethod, LogBase, FloatT, IntegerT, DataPair
 from .types import NPDType, NPFloat, NDIntArray, NDFloatArray
-from .imeasures import LMR, redundancy 
+from .imeasures import LMR, redundancy
 
 class MISIData(PIDCInterface):
     disc_method: DiscretizerMethod = "bayesian_blocks"
@@ -35,8 +35,8 @@ class MISIData(PIDCInterface):
     #
     hist: NDFloatArray = np.array(())
     bins: NDFloatArray = np.array(())
-    pair_hist: NDFloatArray = np.array(())
-    pair_jvir: NDFloatArray = np.array(())
+    pair_hist: NDFloatArray  | None = None
+    pair_jvir: NDFloatArray  | None = None
     mi: NDFloatArray = np.array(())
     si: NDFloatArray = np.array(())
     lmr: NDFloatArray = np.array(())
@@ -93,8 +93,10 @@ class MISIData(PIDCInterface):
         #
         jvsize = self.jv_dim[pindex]
         jvbounds = range(self.jv_start[pindex], self.jv_start[pindex] + jvsize)
-        self.pair_hist[jvbounds] = npair.sthist.reshape(jvsize)
-        self.pair_jvir[jvbounds] = npair.ljvi.reshape(jvsize)
+        if self.pair_hist is not None and npair.sthist is not None:
+            self.pair_hist[jvbounds] = npair.sthist.reshape(jvsize)
+        if self.pair_jvir is not None and npair.ljvi is not None:
+            self.pair_jvir[jvbounds] = npair.ljvi.reshape(jvsize)
         #
         isi_bounds, jsi_bounds = self.pair_si_bounds(i, j)
         self.si[isi_bounds] = npair.x_si
@@ -215,7 +217,7 @@ class MISIData(PIDCInterface):
             self.lmr[isi_bounds] = self.compute_lmr(about=i, by=j)
             self.lmr[jsi_bounds] = self.compute_lmr(about=j, by=i)
 
-    def prep_pair_data(self, hist_dim: NDIntArray, nvars: int):
+    def prep_pair_data(self, hist_dim: NDIntArray, nvars: int, save_hist:bool):
         self.npairs = nvars * (nvars - 1)//2
         self.nsi = int(np.sum(hist_dim)) * (nvars)
         self.si_start = np.zeros(hist_dim.size, dtype=self.idx_type)
@@ -244,8 +246,12 @@ class MISIData(PIDCInterface):
             self.jv_start[ijx] = self.jv_dim[ijx - 1] + self.jv_start[ijx - 1]
         #
         self.nsjv_dim = int(np.sum(self.jv_dim))
-        self.pair_hist = np.zeros(self.nsjv_dim, dtype=self.float_dtype())
-        self.pair_jvir = np.zeros(self.nsjv_dim, dtype=self.float_dtype())
+        if save_hist:
+            self.pair_hist = np.zeros(self.nsjv_dim, dtype=self.float_dtype())
+            self.pair_jvir = np.zeros(self.nsjv_dim, dtype=self.float_dtype())
+        else:
+            self.pair_hist = None
+            self.pair_jvir = None
         self.mi = np.zeros(self.npairs, dtype=self.float_dtype())
         self.si = np.zeros(self.nsi, dtype=self.float_dtype())
         self.lmr = np.zeros(self.nsi, dtype=self.float_dtype())
@@ -302,8 +308,10 @@ class MISIData(PIDCInterface):
             # pair_lookup: dict[tuple[int, int], int] = {}
             create_h5ds(data_grp, "jv_dim", self.jv_dim)
             create_h5ds(data_grp, "jv_start", self.jv_start)
-            create_h5ds(data_grp, "pair_hist", self.pair_hist)
-            create_h5ds(data_grp, "pair_jvir", self.pair_jvir)
+            if self.pair_hist is not None:
+                create_h5ds(data_grp, "pair_hist", self.pair_hist)
+            if self.pair_jvir is not None:
+                create_h5ds(data_grp, "pair_jvir", self.pair_jvir)
             create_h5ds(data_grp, "mi", self.mi)
             create_h5ds(data_grp, "si", self.si)
             create_h5ds(data_grp, "lmr", self.lmr)
@@ -333,8 +341,10 @@ class MISIData(PIDCInterface):
             misiobj.jv_dim    = data_grp["jv_dim"][:]  # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
             misiobj.jv_start  = data_grp["jv_start"][:]  # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
             misiobj.si_start  = data_grp["si_start"][:]  # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
-            misiobj.pair_hist = data_grp["pair_hist"][:]  # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
-            misiobj.pair_jvir = data_grp["pair_jvir"][:]  # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
+            if "pair_hist" in data_grp.keys():
+                misiobj.pair_hist = data_grp["pair_hist"][:]  # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
+            if "pair_jvir" in data_grp.keys():
+                misiobj.pair_jvir = data_grp["pair_jvir"][:]  # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
             misiobj.si        = data_grp["si"][:]  # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
             misiobj.lmr       = data_grp["lmr"][:]  # pyright: ignore[reportAttributeAccessIssue, reportIndexIssue]
             misiobj.pair_lookup = {
@@ -350,6 +360,7 @@ class MISIData(PIDCInterface):
         data_dims: tuple[int, int] | None,
         tbase: LogBase,
         disc_method: DiscretizerMethod,
+        save_hist: bool = True,
     ):
         mobj = cls()
         mobj.disc_method = disc_method
@@ -361,7 +372,7 @@ class MISIData(PIDCInterface):
             data, mobj.nobs, mobj.nvars, mobj.disc_method, mobj.ftype, mobj.itype
         )
         mobj.set_nodes_data(bins_list, hist_list)
-        mobj.prep_pair_data(mobj.hist_dim, mobj.nvars)
+        mobj.prep_pair_data(mobj.hist_dim, mobj.nvars, save_hist)
         for pindex, (i, j) in enumerate(
             itertools.combinations(range(mobj.nvars), 2)
         ):
@@ -382,7 +393,7 @@ class MISIData(PIDCInterface):
         return mobj
 
     @classmethod
-    def from_pair_list_data(cls, npld: PIDCPairListData):
+    def from_pair_list_data(cls, npld: PIDCPairListData, save_hist: bool = True):
         mobj = cls()
         mobj.nobs, mobj.nvars = npld.nobs, npld.nvars
         mobj.disc_method = npld.disc_method
@@ -391,7 +402,7 @@ class MISIData(PIDCInterface):
             [nx.bins for nx in npld.nodes],
             [nx.hist for nx in npld.nodes],
         )
-        mobj.prep_pair_data(mobj.hist_dim, mobj.nvars)
+        mobj.prep_pair_data(mobj.hist_dim, mobj.nvars, save_hist)
         for (i, j), npair in npld.node_pairs.items():
             pindex = mobj.pair_lookup[(i,j)]
             mobj.set_pair_data(pindex, i, j, npair)
@@ -405,6 +416,7 @@ class MISIData(PIDCInterface):
         dshape: tuple[int, int],
         disc_method: DiscretizerMethod,
         tbase: LogBase,
+        save_hist: bool = True
     ):
         mobj = cls()
         mobj.nobs, mobj.nvars = dshape
@@ -414,7 +426,7 @@ class MISIData(PIDCInterface):
             [nx.bins for nx in nodes],
             [nx.hist for nx in nodes],
         )
-        mobj.prep_pair_data(mobj.hist_dim, mobj.nvars)
+        mobj.prep_pair_data(mobj.hist_dim, mobj.nvars, save_hist)
         for pindex, i, j, npair in node_pairs:
             mobj.set_pair_data(pindex, i, j, npair)
         return mobj
@@ -532,11 +544,13 @@ class MISIDataH5(PIDCInterface):
         jvstart = self.jv_start(pindex)
         jvsize = self.jv_dim(pindex)
         jvstop = jvstart + jvsize
-        if jvsize != npair.sthist.size:
-            print(i, j, pindex, jvsize, npair.sthist.size)
-        assert jvsize == npair.sthist.size
-        self.h5_fptr["/data/pair_hist"][jvstart:jvstop] = npair.sthist.reshape(jvsize)  # pyright: ignore[reportIndexIssue]
-        self.h5_fptr["/data/pair_jvir"][jvstart:jvstop] = npair.ljvi.reshape(jvsize)  # pyright: ignore[reportIndexIssue]
+        if npair.sthist is not None:
+            if jvsize != npair.sthist.size:
+                print(i, j, pindex, jvsize, npair.sthist.size)
+            assert jvsize == npair.sthist.size
+            self.h5_fptr["/data/pair_hist"][jvstart:jvstop] = npair.sthist.reshape(jvsize)  # pyright: ignore[reportIndexIssue]
+        if npair.ljvi is not None:
+            self.h5_fptr["/data/pair_jvir"][jvstart:jvstop] = npair.ljvi.reshape(jvsize)  # pyright: ignore[reportIndexIssue]
         #
         isi_range, jsi_range = self.pair_si_range(i, j)
         self.h5_fptr["/data/si"][isi_range] = npair.x_si    # pyright: ignore[reportIndexIssue]
@@ -621,7 +635,7 @@ class MISIPair(PIDCInterface):
     mi : FloatT
     #
     idx: DataPair[IntegerT]
-    hist_dim: DataPair[IntegerT] 
+    hist_dim: DataPair[IntegerT]
     #
     hist: DataPair[NDFloatArray]
     si: DataPair[NDFloatArray]
@@ -720,7 +734,7 @@ class MISIPair(PIDCInterface):
     @t.override
     def nvariables(self):
         return self.nvars
-    
+ 
     @t.override
     def get_lmr_minsum(self, about:int, target:int) -> FloatT:
         if about == self.idx.first:
@@ -737,11 +751,11 @@ class MISIPair(PIDCInterface):
 
     @classmethod
     def from_misidata(cls, misd: MISIData | MISIDataH5, i: int, j:int):
-        ihist_dim = misd.get_hist_dim(i) 
+        ihist_dim = misd.get_hist_dim(i)
         ibstart = int(misd.get_si_start(i))
         ibend = ibstart + misd.nvariables * ihist_dim
         #
-        jhist_dim = misd.get_hist_dim(j) 
+        jhist_dim = misd.get_hist_dim(j)
         jbstart = int(misd.get_si_start(j))
         jbend = jbstart + misd.nvariables * jhist_dim
         return cls(
@@ -876,9 +890,9 @@ class MISIRangePair(PIDCInterface):
             se_hdim[i] = se_hdim[i-1] + self.hist_dim.second[i-1]
         # se_hdim = se_hdim * self.nvars
         #
-        self.range_hist_start = DataPair(fi_hdim, se_hdim) 
+        self.range_hist_start = DataPair(fi_hdim, se_hdim)
         self.range_si_start = DataPair(fi_hdim * self.nvars,
-                                       se_hdim * self.nvars) 
+                                       se_hdim * self.nvars)
         self.lmr_ds  = DataPair([],[])
         if subset_var:
             self.subset_var = subset_var
@@ -914,7 +928,7 @@ class MISIRangePair(PIDCInterface):
     @t.override
     def int_dtype(self) -> NPDType:
         return self.itype
-    
+
     @t.override
     def index_dtype(self) -> NPDType:
         return self.idx_type
@@ -957,12 +971,12 @@ class MISIRangePair(PIDCInterface):
 
     def _select_lmr(self, selector:int):
         return self.lmr.first if self._is_first(selector) else self.lmr.second
- 
+
     def _is_first(self, i:int):
         if (self.st_ranges.first.start <= i) and (i < self.st_ranges.first.stop):
             return True
         return False
-  
+
     def _var_loc(self, i:int) -> tuple[bool, IntegerT]:
         if self._is_first(i):
             return True, i - self.st_ranges.first.start
@@ -970,7 +984,7 @@ class MISIRangePair(PIDCInterface):
 
     def get_first_hist_dim(self, i: int) -> IntegerT:
         di = i - self.st_ranges.first.start
-        return self.hist_dim.first[di] 
+        return self.hist_dim.first[di]
 
     def get_second_hist_dim(self, i: int) -> IntegerT:
         di = i - self.st_ranges.second.start
@@ -980,7 +994,7 @@ class MISIRangePair(PIDCInterface):
     def get_hist_dim(self, i: int) -> IntegerT:
         src_flag, di = self._var_loc(i)
         return self.hist_dim.first[di] if src_flag else self.hist_dim.second[di]
-  
+
     def _si_begin(self, about: int, by: int) -> IntegerT:
         frst_flag, vloc = self._var_loc(about)
         if frst_flag:
@@ -1012,7 +1026,7 @@ class MISIRangePair(PIDCInterface):
     def get_mi(self, i:int, j:int) -> float | NPFloat:
         if self.mi_cache is not None:
             pindex = triu_pair_to_index(self.nvars, i, j)
-            return self.mi_cache[pindex] 
+            return self.mi_cache[pindex]
         return self.mi[self.pair_lookup[(i,j)]]
 
     @t.override
@@ -1038,14 +1052,14 @@ class MISIRangePair(PIDCInterface):
             by_nodes = range(self.nvariables)
         ihist = self.get_first_hist(i)
         jhist = self.get_second_hist(j)
-        # 
+        #
         fsi_vec = self.si.first
         ssi_vec = self.si.second
         ibj_bounds = self._first_si_bounds(about=i, by=j)
         jbi_bounds = self._second_si_bounds(about=j, by=i)
         isi_byj = fsi_vec[ibj_bounds.start: ibj_bounds.stop]
         jsi_byi = ssi_vec[jbi_bounds.start: jbi_bounds.stop]
-        # 
+        #
         red_value = np.float64(0.0).astype(self.float_dtype())
         for kby in by_nodes:
             if kby == i or kby == j:
@@ -1077,7 +1091,7 @@ class MISIRangePair(PIDCInterface):
     def lmr_value(self, about:int, by:int, rstate:int) -> FloatT:
         si_idx = self._si_begin(about, by) + rstate
         return self._select_lmr(about)[si_idx]
-   
+
     @t.override
     def get_lmr_minsum(self, about:int, target:int) -> FloatT:
         src_flag, dxa = self._var_loc(about)
