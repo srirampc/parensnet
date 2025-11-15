@@ -2,7 +2,7 @@ import numpy as np
 import typing as t
 
 from collections.abc import Callable
-from .types import NPFloat, NDFloatArray, FloatT, LogBase, EstimatorMethod 
+from ..types import NPFloat, NDFloatArray, FloatT, LogBase, EstimatorMethod 
 from .bayesian_blocks import block_bins
 
 ShrinkageFn: t.TypeAlias = Callable[[NDFloatArray, NDFloatArray, int], NDFloatArray]
@@ -20,7 +20,7 @@ def log(
             return np.log10(p)
         case '1p':
             return np.log1p(p)
-    return np.log(p)
+    return np.log(p) # pyright: ignore[reportUnreachable]
 
 
 def log_jvi_ratio(
@@ -93,7 +93,7 @@ class DiscretePDFBuilder:
                 return DiscretePDFBuilder.shrinkage(frequencies, shrinkage_fn)
             case "dirichlet":
                 return DiscretePDFBuilder.dirichlet(frequencies, prior)
-        return None
+        return None  # pyright: ignore[reportUnreachable]
 
 
 class HistogramBuilder:

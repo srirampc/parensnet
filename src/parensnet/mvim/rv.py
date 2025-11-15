@@ -1,21 +1,20 @@
 import numpy as np
 import itertools
 import typing as t
-import h5py
 
 # from pydantic import BaseModel
 
 from collections.abc import Generator, Iterable
 from abc import ABC, abstractmethod
-
 from numpy.typing import NDArray
-from .types import NDIntArray, NPFloat, NPInteger, NDFloatArray, NPDType
-from .types import FloatT, IntegerT, DiscretizerMethod, LogBase
+
+from ..types import NDIntArray, NPFloat, NDFloatArray, NPDType
+from ..types import FloatT, IntegerT, DiscretizerMethod, LogBase
 from .bayesian_blocks import block_bins
 from .imeasures import LMR, MI, SI, log_jvi_ratio, redundancy
 
 
-class PIDCNode:
+class RVNode:
     nobs: int = 0
     method: DiscretizerMethod
     bins: NDFloatArray = np.array(())
@@ -31,7 +30,7 @@ class PIDCNode:
     ):
         self.nobs=data.size if nobs is None else nobs
         self.method=method
-        self.bins, self.hist = PIDCNode.compute_hist_for(
+        self.bins, self.hist = RVNode.compute_hist_for(
             data, nobs, method, dtype, int_dtype
         )
 
@@ -80,14 +79,14 @@ class PIDCNode:
         method: DiscretizerMethod,
         dtype: NPDType,
         int_dtype: NPDType,
-    ) -> list["PIDCNode"]:
+    ) -> list["RVNode"]:
         return [
             cls(exp_data[:, ix], nobs, method, dtype, int_dtype)
             for ix in range(nvars)
         ]
 
 
-class PIDCPair:
+class RVNodePair:
     method: DiscretizerMethod = "bayesian_blocks"
     tbase: LogBase = '2'
     sthist: NDFloatArray | None = None
@@ -127,13 +126,13 @@ class PIDCPair:
     @classmethod
     def from_nodes(
         cls,
-        fnodes: tuple[PIDCNode, PIDCNode],
+        fnodes: tuple[RVNode, RVNode],
         fdata: tuple[NDFloatArray, NDFloatArray],
         tbase: LogBase,
         dtype: NPDType,
         int_dtype: NPDType,
         save_hist:bool = True,
-    ) -> "PIDCPair":
+    ) -> "RVNodePair":
         xnode, ynode = fnodes
         xdata, ydata = fdata
         assert xnode.nobs == ynode.nobs
@@ -195,14 +194,14 @@ class PIDCPair:
     @classmethod
     def from_data(
         cls,
-        nodes: list[PIDCNode],
+        nodes: list[RVNode],
         exp_data: NDFloatArray,
         nvars: int | None,
         tbase: LogBase,
         dtype: NPDType,
         int_dtype: NPDType,
         save_hist: bool = True,
-    ) -> dict[tuple[int, int], "PIDCPair"]:
+    ) -> dict[tuple[int, int], "RVNodePair"]:
         nvars = len(nodes) if nvars is None else nvars
         assert nvars <= len(nodes)
         return {
@@ -218,14 +217,14 @@ class PIDCPair:
         }
 
 
-class PIDCPairData(t.NamedTuple):
+class RVPairData(t.NamedTuple):
     pindex: int
     i: int
     j: int
-    pidc_pair: PIDCPair
+    pidc_pair: RVNodePair
 
 
-class PIDCInterface(ABC):
+class MRVInterface(ABC):
 
     def __init__(self, *args: t.Any, **kwargs: t.Any):
         super().__init__(*args, **kwargs)
@@ -420,7 +419,7 @@ class PIDCInterface(ABC):
         )
  
 
-class PIDCPairListData(PIDCInterface):
+class MRVNodePairs(MRVInterface):
     disc_method: DiscretizerMethod = "bayesian_blocks"
     tbase: LogBase = '2'
     #
@@ -429,16 +428,16 @@ class PIDCPairListData(PIDCInterface):
     npairs: int
     #
     data: NDFloatArray = np.array(())
-    nodes: list[PIDCNode] = []
-    node_pairs: dict[tuple[int, int], PIDCPair] = {}
+    nodes: list[RVNode] = []
+    node_pairs: dict[tuple[int, int], RVNodePair] = {}
 
     def __init__(
         self,
         nvars: int,
         nobs: int,
         npairs: int,
-        nodes: list[PIDCNode],
-        node_pairs: dict[tuple[int, int], PIDCPair],
+        nodes: list[RVNode],
+        node_pairs: dict[tuple[int, int], RVNodePair],
         data: NDFloatArray | None = None,
         tbase: LogBase = '2',
         disc_method: DiscretizerMethod = 'bayesian_blocks',
@@ -537,9 +536,9 @@ class PIDCPairListData(PIDCInterface):
         save_hist: bool = True,
     ):
         nobs, nvars = shape
-        nodes = PIDCNode.from_data(data, nvars, nobs, dmethod, dtype, int_dtype)
-        node_pairs = PIDCPair.from_data(nodes, data, nvars, tbase, dtype, int_dtype, save_hist)
-        return PIDCPairListData(
+        nodes = RVNode.from_data(data, nvars, nobs, dmethod, dtype, int_dtype)
+        node_pairs = RVNodePair.from_data(nodes, data, nvars, tbase, dtype, int_dtype, save_hist)
+        return MRVNodePairs(
             disc_method=dmethod,
             tbase=tbase,
             nvars=nvars,
@@ -551,7 +550,7 @@ class PIDCPairListData(PIDCInterface):
         )
 
     @classmethod
-    def from_pairs(cls, nodes: list[PIDCNode], node_pairs: list[PIDCPair]):
+    def from_pairs(cls, nodes: list[RVNode], node_pairs: list[RVNodePair]):
         nvars = len(nodes)
         np_keys = [(i, j) for i,j in itertools.combinations(range(nvars), 2)]
         npairs_dict = {(i, j): npx for (i, j), npx in zip(np_keys, node_pairs)}
@@ -572,7 +571,7 @@ class LMRDataStructure:
     lmr_rank: NDIntArray
     lmr_pfxsum: NDFloatArray
 
-    def __init__(self, pidata: PIDCInterface, about:int):
+    def __init__(self, pidata: MRVInterface, about:int):
         self.nvars = pidata.nvariables
         self.about = about
         self.dim = int(pidata.get_hist_dim(about))
@@ -593,7 +592,7 @@ class LMRDataStructure:
                 self.lmr_sorted[rsbegin + ix] = svx
                 self.lmr_pfxsum[rsbegin + ix] = curr_sum
 
-    def _si_values_list(self, pidata: PIDCInterface, about: int):
+    def _si_values_list(self, pidata: MRVInterface, about: int):
         vl_dtype = np.dtype([
             ('v', self.lmr_sorted.dtype), ('i', self.lmr_rank.dtype)
         ])
@@ -616,7 +615,7 @@ class LMRDataStructure:
             si_values.sort()
         return si_values_list
 
-    def __init_ds(self, pidata: PIDCInterface, about: int):
+    def __init_ds(self, pidata: MRVInterface, about: int):
         #
         si_values_list = self._si_values_list(pidata, about)
         si_values_list = self._sort_si_values(si_values_list)
@@ -678,11 +677,11 @@ class LMRSubsetDataStructure:
     lmr_rank: NDIntArray
     subset_var: list[int]
     subset_map: dict[int, int]
-    pidata: PIDCInterface
+    pidata: MRVInterface
 
     def __init__(
         self,
-        pidata: PIDCInterface,
+        pidata: MRVInterface,
         about:int,
         subset_var: list[int],
         subset_map: dict[int, int],
@@ -711,7 +710,7 @@ class LMRSubsetDataStructure:
                 self.lmr_sorted[rsbegin + ix] = svx
                 self.lmr_pfxsum[rsbegin + ix] = curr_sum
 
-    def _si_values_list(self, pidata: PIDCInterface, about: int):
+    def _si_values_list(self, pidata: MRVInterface, about: int):
         vl_dtype = np.dtype([
             ('v', self.lmr_sorted.dtype), ('i', self.lmr_rank.dtype)
         ])
@@ -734,7 +733,7 @@ class LMRSubsetDataStructure:
             si_values.sort()
         return si_values_list
 
-    def __init_ds(self, pidata: PIDCInterface, about: int):
+    def __init_ds(self, pidata: MRVInterface, about: int):
         #
         si_values_list = self._si_values_list(pidata, about)
         si_values_list = self._sort_si_values(si_values_list)

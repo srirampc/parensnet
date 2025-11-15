@@ -8,9 +8,9 @@ from .util import (
     InputArgs, WorkDistributor, init_range_input,
     collect_iddtuples, iddtuple_to_h5
 )
-from ..comm_interface import CommInterface, default_comm
-from ..context import get_clr_weight
 from ..types import NPDType, NDIntArray, NDFloatArray, DataPair, IDDTuple
+from ..comm_interface import CommInterface, default_comm
+from ..mvim.context import get_clr_weight
 
 
 class ContextWorkflow:

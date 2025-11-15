@@ -4,3 +4,6 @@
 [submodule "ext/eigen"]
 	path = ext/eigen
 	url = https://gitlab.com/libeigen/eigen.git
+[submodule "ext/mxx"]
+	path = ext/mxx
+	url = https://github.com/patflick/mxx.git

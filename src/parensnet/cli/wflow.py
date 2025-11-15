@@ -10,15 +10,17 @@ from collections.abc import Iterable
 from devtools import pformat
 from codetiming import Timer
 
+from ..types import (
+    DiscretizerMethod, IDDTuple, LogBase, DataPair,
+    NDIntArray, NDFloatArray, NPDType 
+)
 from ..comm_interface import IDComm
-from ..context import get_clr_weight
-
 from ..workflow.util import InputArgs, iddtuple_to_h5
-from ..pidc import PIDCNode, PIDCPair, PIDCPairListData
-from ..misi import MISIDataH5
-from ..types import DiscretizerMethod, IDDTuple, LogBase, NDFloatArray, NPDType, DataPair
+from ..mvim.context import get_clr_weight
 
-from ..util import NDIntArray
+from ..mvim.rv import RVNode, RVNodePair, MRVNodePairs
+from ..mvim.misi import MISIDataH5
+
 #
 
 def _log():
@@ -29,13 +31,18 @@ def compute_nodes(
     dmethod: DiscretizerMethod = "bayesian_blocks",
     ftype: NPDType = np.float32,
     itype: NPDType = np.int32
-) -> list[PIDCNode]:
+) -> list[RVNode]:
+    def create_node(x: NDFloatArray):
+        return RVNode(x, None, dmethod, ftype, itype)
     return db.from_sequence(data_list).map(
-        lambda x: PIDCNode(x, None, dmethod, ftype, itype)
+        create_node
+        # lambda x: RVNode(x, None, dmethod, ftype, itype)
         ).compute()
 
 
-def subset_puc(i: int, j: int, h5_file: str, by_list: Iterable[int]):
+#def subset_puc(i: int, j: int, h5_file: str, by_list: Iterable[int]):
+def subset_puc(subset_desc: tuple[int, int, str, Iterable[int]]):
+    i, j, h5_file, by_list = subset_desc
     with MISIDataH5(h5_file) as misihx:
         return misihx.accumulate_redundancies(i, j, by_list)
 
@@ -64,7 +71,7 @@ def run_subc_pair_batches(
     plist: list[tuple[int, int, str, Iterable[int]]],
     sbegin: list[int],
     sends: list[int],
-) -> tuple[list[list[PIDCPair]], dict[int, t.Any]]:
+) -> tuple[list[list[RVNodePair]], dict[int, t.Any]]:
     npartitions = len(sbegin)
     batch_pairs = [[] for _ in range(npartitions)]
     batch_pairs_time = {x: 0.0 for x in range(npartitions)}
@@ -72,7 +79,8 @@ def run_subc_pair_batches(
         batch_start = time.time()
         print(f"Start Batch {ix} : Range {bstart} : {bend}")
         batch_pairs[ix] = db.from_sequence(plist[bstart:bend]).map(
-            lambda x: subset_puc(x[0], x[1], x[2], x[3])
+            #lambda x: subset_puc(x[0], x[1], x[2], x[3])
+            subset_puc
         ).compute()
         batch_end = time.time()
         batch_time = batch_end - batch_start
@@ -83,7 +91,7 @@ def run_subc_pair_batches(
 
 def prep_pair_batches(
     data_list: list[NDFloatArray],
-    nodes: list[PIDCNode],
+    nodes: list[RVNode],
     nvars: int,
     npartitions:int,
 ):
@@ -101,23 +109,26 @@ def prep_pair_batches(
     return plist, sbegin, sends
 
 def run_pair_batches(
-    plist: list[tuple[PIDCNode, PIDCNode, NDFloatArray, NDFloatArray]],
+    plist: list[tuple[RVNode, RVNode, NDFloatArray, NDFloatArray]],
     sbegin: list[int],
     sends: list[int],
     lbase: LogBase,
     ftype: NPDType,
     itype: NPDType,
-) -> tuple[list[list[PIDCPair]], dict[int, t.Any]]:
+) -> tuple[list[list[RVNodePair]], dict[int, t.Any]]:
     npartitions = len(sbegin)
     batch_pairs = [[] for _ in range(npartitions)]
     batch_pairs_time = {x: 0.0 for x in range(npartitions)}
+    def build_rv_node(x: tuple[RVNode, RVNode, NDFloatArray, NDFloatArray]):
+        return RVNodePair.from_nodes(
+                (x[0], x[1]), (x[2], x[3]), lbase, ftype, itype
+            )
+    #
     for ix, (bstart, bend)  in enumerate(zip(sbegin, sends)):
         batch_start = time.time()
         print(f"Start Batch {ix} : Range {bstart} : {bend}")
         batch_pairs[ix] = db.from_sequence(plist[bstart:bend]).map(
-            lambda x: PIDCPair.from_nodes(
-                (x[0], x[1]), (x[2], x[3]), lbase, ftype, itype
-            )
+            build_rv_node
         ).compute()
         batch_end = time.time()
         batch_time = batch_end - batch_start
@@ -127,10 +138,10 @@ def run_pair_batches(
  
 
 def merge_batches(
-    sbegin: list[int],
-    sends: list[int],
-    batch_pairs: list[list[PIDCPair]],
-) -> list[PIDCPair]:
+    _sbegin: list[int],
+    _sends: list[int],
+    batch_pairs: list[list[RVNodePair]],
+) -> list[RVNodePair]:
     # npairs = sum([len(px) for px in batch_pairs])
     # node_pairs = [None for _ in range(npairs)]
     # for ix, (bstart, _)  in enumerate(zip(sbegin, sends)):
@@ -143,14 +154,14 @@ def merge_batches(
 
 
 def pldata_from_pairs(
-    nodes: list[PIDCNode],
-    node_pairs: list[PIDCPair],
+    nodes: list[RVNode],
+    node_pairs: list[RVNodePair],
     nobs: int,
     nvars: int,
 ):
     np_keys = [(i, j) for i,j in itertools.combinations(range(nvars), 2)]
     npairs_dict = {(i, j): npx for (i, j), npx in zip(np_keys, node_pairs)}
-    return  PIDCPairListData(
+    return  MRVNodePairs(
         nobs=nobs,
         nvars=nvars,
         npairs=len(node_pairs),
@@ -187,8 +198,8 @@ class DaskWorkflow:
             self.adata[:, ix] for ix in range(self.nvariables)
         ]
         #
-        self.nodes: list[PIDCNode] = []
-        self.node_pairs: list[PIDCPair] = []
+        self.nodes: list[RVNode] = []
+        self.node_pairs: list[RVNodePair] = []
 
     @classmethod
     def from_h5ad(

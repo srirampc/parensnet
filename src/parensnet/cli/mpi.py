@@ -44,7 +44,7 @@ class ClusterUnionWorkflow:
 
     @Timer(name="ClusterUnionWorkflow::run", logger=None)
     def run(self):
-        #self.clust_labels = self.clust_labels[:3]
+        self.clust_labels = self.clust_labels[10:]
         mfiles = [f"{self.mxargs.wflow_dir}/misi_C{str(clabel)}.h5" for clabel in self.clust_labels]
         pfiles = [f"{self.mxargs.wflow_dir}/puc_C{str(clabel)}.h5" for clabel in self.clust_labels]
         #pdfiles = [f"{self.mxargs.temp_dir}/pidc_C{str(clabel)}.h5" for clabel in self.clust_labels]
@@ -61,16 +61,16 @@ class ClusterUnionWorkflow:
             misiwf = MISIWorkflow(self.mxargs, self.wdistr, cxselect, misi_file)
             misiwf.run()
             self.comm.barrier()
-            spucwf = SPUCWorkflow(self.mxargs, self.wdistr, misi_file, puc_file)
-            spucwf.run_with_ranges(True)
-            self.comm.barrier()
+            # spucwf = SPUCWorkflow(self.mxargs, self.wdistr, misi_file, puc_file)
+            # spucwf.run_with_ranges(True)
+            # self.comm.barrier()
             
-        punion = PUCUnionWorkflow(self.mxargs, self.wdistr, pfiles)
-        punion.run()
-        self.comm.barrier()
-        ctxwf = ContextWorkflow(self.mxargs, self.wdistr)
-        ctxwf.run()
-        self.comm.barrier()
+        # punion = PUCUnionWorkflow(self.mxargs, self.wdistr, pfiles)
+        # punion.run()
+        # self.comm.barrier()
+        # ctxwf = ContextWorkflow(self.mxargs, self.wdistr)
+        # ctxwf.run()
+        # self.comm.barrier()
 
  
 

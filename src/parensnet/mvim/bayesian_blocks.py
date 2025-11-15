@@ -1,8 +1,6 @@
-import typing as t
 import numpy as np
-import numpy.typing as npt
 
-from .types import NDFloatArray, NPDType
+from ..types import NDFloatArray, NPDType
 
 def block_bins(data: NDFloatArray, dtype: NPDType) -> NDFloatArray:
 	unique_data = np.unique(data)

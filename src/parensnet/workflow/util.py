@@ -96,6 +96,7 @@ def init_range_input(
 class InputArgs(pydantic.BaseModel):
     h5ad_file: str = "./data/pbmc20k/adata.20k.5k.h5ad"
     nodes_pickle: str = "/localscratch/schockalingam6/tmp/adata.20k.5k.nodes.pickle"
+    nodes_pairs_pickle: str = "/localscratch/schockalingam6/tmp/adata.20k.5k.node_pairs.pickle"
     misi_data_file: str = "/localscratch/schockalingam6/tmp/adata.20k.5k.np_par_misidata.h5"
     puc_file: str = "/localscratch/schockalingam6/tmp/adata.20k.5k.par_puc.h5"
     pidc_file: str = "/localscratch/schockalingam6/tmp/adata.20k.5k.par_pidc.h5"

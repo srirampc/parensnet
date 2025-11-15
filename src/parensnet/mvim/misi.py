@@ -4,14 +4,16 @@ import numpy as np
 import h5py
 
 from collections.abc import Iterable
-from .pidc import LMRSubsetDataStructure, PIDCInterface, PIDCNode, PIDCPair
-from .pidc import LMRDataStructure, PIDCPairData, PIDCPairListData
-from .util import create_h5ds, triu_pair_to_index, flatten_npalist
-from .types import DiscretizerMethod, LogBase, FloatT, IntegerT, DataPair
-from .types import NPDType, NPFloat, NDIntArray, NDFloatArray
+from ..types import DiscretizerMethod, LogBase, FloatT, IntegerT, DataPair
+from ..types import NPDType, NPFloat, NDIntArray, NDFloatArray
+from ..util import create_h5ds, triu_pair_to_index, flatten_npalist
+from .rv import (
+  RVNode, RVNodePair,RVPairData, MRVInterface, MRVNodePairs,
+  LMRSubsetDataStructure, LMRDataStructure
+)
 from .imeasures import LMR, redundancy
 
-class MISIData(PIDCInterface):
+class MISIData(MRVInterface):
     disc_method: DiscretizerMethod = "bayesian_blocks"
     tbase: LogBase = '2'
     #
@@ -88,7 +90,7 @@ class MISIData(PIDCInterface):
         assert hend <= self.hist.size
         return self.hist[hstart:hend]
 
-    def set_pair_data(self, pindex: int, i: int, j: int, npair: PIDCPair):
+    def set_pair_data(self, pindex: int, i: int, j: int, npair: RVNodePair):
         self.mi[pindex] = npair.mi
         #
         jvsize = self.jv_dim[pindex]
@@ -159,7 +161,7 @@ class MISIData(PIDCInterface):
             self.si_bounds(about=j, by=i),
         )
 
-    def __get_ljvr(self, i:int, j:int):
+    def __get_ljvr(self, i:int, j:int) -> NDFloatArray:
         assert i < j
         idim, jdim = self.get_hist_dim(i), self.get_hist_dim(j)
         jv_start, jv_end = self.jv_bounds(i, j)
@@ -171,7 +173,7 @@ class MISIData(PIDCInterface):
         else:
             return self.__get_ljvr(j, i)
 
-    def __get_joint_hist(self, i:int, j:int):
+    def __get_joint_hist(self, i:int, j:int) -> NDFloatArray:
         assert i < j
         idim, jdim = self.get_hist_dim(i), self.get_hist_dim(j)
         jv_start, jv_end = self.jv_bounds(i, j)
@@ -368,7 +370,7 @@ class MISIData(PIDCInterface):
         mobj.nobs, mobj.nvars= data.shape if data_dims is None else data_dims
         mobj.npairs = mobj.nvars * (mobj.nvars - 1)//2
         #
-        bins_list, hist_list = PIDCNode.compute_hist(
+        bins_list, hist_list = RVNode.compute_hist(
             data, mobj.nobs, mobj.nvars, mobj.disc_method, mobj.ftype, mobj.itype
         )
         mobj.set_nodes_data(bins_list, hist_list)
@@ -380,7 +382,7 @@ class MISIData(PIDCInterface):
             idata, jdata = data[:mobj.nobs, i], data[:mobj.nobs, j]
             inode_data = mobj.get_node_data(i)
             jnode_data = mobj.get_node_data(j)
-            npair = PIDCPair.from_node_data(
+            npair = RVNodePair.from_node_data(
                 (idata, *inode_data),
                 (jdata, *jnode_data),
                 mobj.nobs,
@@ -393,7 +395,7 @@ class MISIData(PIDCInterface):
         return mobj
 
     @classmethod
-    def from_pair_list_data(cls, npld: PIDCPairListData, save_hist: bool = True):
+    def from_pair_list_data(cls, npld: MRVNodePairs, save_hist: bool = True):
         mobj = cls()
         mobj.nobs, mobj.nvars = npld.nobs, npld.nvars
         mobj.disc_method = npld.disc_method
@@ -411,8 +413,8 @@ class MISIData(PIDCInterface):
     @classmethod
     def from_nodes_and_pairs(
         cls,
-        nodes: list[PIDCNode],
-        node_pairs: list[PIDCPairData],
+        nodes: list[RVNode],
+        node_pairs: list[RVPairData],
         dshape: tuple[int, int],
         disc_method: DiscretizerMethod,
         tbase: LogBase,
@@ -432,7 +434,7 @@ class MISIData(PIDCInterface):
         return mobj
 
 
-class MISIDataH5(PIDCInterface):
+class MISIDataH5(MRVInterface):
     h5_file: str
     h5_fptr: h5py.File | None
     disc_method: DiscretizerMethod = "bayesian_blocks"
@@ -537,7 +539,7 @@ class MISIDataH5(PIDCInterface):
             self.si_range(about=j, by=i),
         )
 
-    def set_pair_data(self, pindex: int, i: int, j: int, npair: PIDCPair):
+    def set_pair_data(self, pindex: int, i: int, j: int, npair: RVNodePair):
         self.h5_fptr["/data/mi"][pindex] = npair.mi    # pyright: ignore[reportIndexIssue]
 
         #
@@ -571,7 +573,7 @@ class MISIDataH5(PIDCInterface):
     def __enter__(self):
         return self.open()
 
-    def __exit__(self, exc_type, exc_value, exc_traceback):
+    def __exit__(self, exc_type: type[Exception], exc_value: Exception, exc_traceback: t.Any):
         self.close()
 
     @t.override
@@ -629,7 +631,7 @@ class MISIDataH5(PIDCInterface):
 
 
 @t.final
-class MISIPair(PIDCInterface):
+class MISIPair(MRVInterface):
     nobs: int
     nvars: int
     mi : FloatT
@@ -671,10 +673,10 @@ class MISIPair(PIDCInterface):
             LMRDataStructure(self, int(pidx.second))
         )
 
-    def _select_first_si(self):
+    def _select_first_si(self): # pyright: ignore[reportUnusedFunction]
         return self.si.first
 
-    def _select_second_si(self):
+    def _select_second_si(self): # pyright: ignore[reportUnusedFunction]
         return self.si.second
 
     def _select_si(self, selector:int):
@@ -775,7 +777,7 @@ class MISIPair(PIDCInterface):
         )
 
 @t.final
-class MISIRangePair(PIDCInterface):
+class MISIRangePair(MRVInterface):
     nobs: int
     nvars: int
     npairs: int

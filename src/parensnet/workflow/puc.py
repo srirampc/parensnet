@@ -10,8 +10,8 @@ from codetiming import Timer
 
 from ..types import NDIntArray, NDFloatArray, DataPair, PUCTuple, IDDTuple
 from ..comm_interface import CommInterface, default_comm
-from ..misi import MISIRangePair, MISIDataH5, MISIPair
 from ..util import create_h5ds, block_range
+from ..mvim.misi import MISIRangePair, MISIDataH5, MISIPair
 from .util import (
     InputArgs, WorkDistributor, init_range_input,
     collect_iddtuples, iddtuple_to_h5
@@ -268,10 +268,10 @@ class SPUCWorkflow:
             #
             misi_range = self._batch_misi_range(bidx, self.comm.rank, mi_cache)
             #
-            # self.comm.log_comm(
-            #     _log(), logging.DEBUG,
-            #     f"B{bidx} :: R: {row_range} ; C: {col_range}"
-            # )
+            self.comm.log_at_root(
+                _log(), logging.DEBUG,
+                f"B{bidx} :: R: {_row_range} ; C: {_col_range}"
+            )
             #
             bsamples_puc[bidx] = self._compute_with_misi_range(
                 misi_range,
@@ -281,6 +281,10 @@ class SPUCWorkflow:
             # if bidx == 2:
             #      break
             # break
+        self.comm.log_at_root(_log(), logging.DEBUG, "Waiting for all Batches")
+        self.comm.barrier()
+        self.comm.log_at_root(_log(), logging.DEBUG, "Completed All Batches")
+
         return bsamples_puc
 
     def input_sample(self, samples_input_file: str) -> list[NDIntArray]:
@@ -307,47 +311,47 @@ class SPUCWorkflow:
                             DataPair[str]("index", "puc"), "data")
 
 
-    @Timer(name="SPUCWorkflow::range_puc_to_zarr", logger=None)
-    def range_puc_to_zarr(self, idds_list: list[IDDTuple]):
-        import zarr
-        pindices = np.vstack([px.first for px in idds_list])
-        pvalues = np.concatenate([px.second for px in idds_list])
-        nlocal = len(pvalues)
-        ilcounts = self.comm.collect_counts(nlocal)
-        range_start = int(np.sum(ilcounts[:self.comm.rank]))
-        range_end = range_start + nlocal
+    #@Timer(name="SPUCWorkflow::range_puc_to_zarr", logger=None)
+    #def range_puc_to_zarr(self, idds_list: list[IDDTuple]):
+    #    import zarr
+    #    pindices = np.vstack([px.first for px in idds_list])
+    #    pvalues = np.concatenate([px.second for px in idds_list])
+    #    nlocal = len(pvalues)
+    #    ilcounts = self.comm.collect_counts(nlocal)
+    #    range_start = int(np.sum(ilcounts[:self.comm.rank]))
+    #    range_end = range_start + nlocal
 
-        if self.comm.rank == 0:
-            zindex = zarr.create_array(
-                store=self.puc_file,
-                name="data/index",
-                shape=(self.mxargs.npairs, 2),
-                dtype=pindices.dtype,
-                overwrite=True,
-            )
-            zvalues = zarr.create_array(
-                store=self.puc_file,
-                name="data/puc",
-                shape=self.mxargs.npairs,
-                dtype=pvalues.dtype,
-                overwrite=True,
-            )
-        self.comm.barrier()
-        self.comm.log_comm(_log(), logging.DEBUG,
-                           f"R:: {range_start}, {range_end}")
-        self.comm.barrier()
-        zindex = zarr.open_array(
-            store=self.puc_file,
-            path="data/index",
-            mode='r+',
-        )
-        zvalues = zarr.open_array(
-            store=self.puc_file,
-            path="data/puc",
-            mode='r+',
-        )
-        zindex[range_start:range_end, :] = pindices
-        zvalues[range_start:range_end] = pvalues
+    #    if self.comm.rank == 0:
+    #        zindex = zarr.create_array(
+    #            store=self.puc_file,
+    #            name="data/index",
+    #            shape=(self.mxargs.npairs, 2),
+    #            dtype=pindices.dtype,
+    #            overwrite=True,
+    #        )
+    #        zvalues = zarr.create_array(
+    #            store=self.puc_file,
+    #            name="data/puc",
+    #            shape=self.mxargs.npairs,
+    #            dtype=pvalues.dtype,
+    #            overwrite=True,
+    #        )
+    #    self.comm.barrier()
+    #    self.comm.log_comm(_log(), logging.DEBUG,
+    #                       f"R:: {range_start}, {range_end}")
+    #    self.comm.barrier()
+    #    zindex = zarr.open_array(
+    #        store=self.puc_file,
+    #        path="data/index",
+    #        mode='r+',
+    #    )
+    #    zvalues = zarr.open_array(
+    #        store=self.puc_file,
+    #        path="data/puc",
+    #        mode='r+',
+    #    )
+    #    zindex[range_start:range_end, :] = pindices
+    #    zvalues[range_start:range_end] = pvalues
 
     @Timer(name="SPUCWorkflow::run_with_ranges", logger=None)
     def run_with_ranges(self, gen_samples:bool=True):
@@ -367,10 +371,7 @@ class SPUCWorkflow:
         mi_cache = self._load_mi_cache()
         slist = self._compute_with_ranges(rsamples, mi_cache)
         #
-        if self.puc_file.endswith("zarr"):
-            self.range_puc_to_zarr(slist)
-        else:
-            self.range_puc_to_h5(slist)
+        self.range_puc_to_h5(slist)
         
     @Timer(name="SPUCWorkflow::run_with_pairs", logger=None)
     def run_with_pairs(self):

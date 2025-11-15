@@ -1,6 +1,6 @@
 import numpy as np
 
-from .types import NDFloatArray
+from ..types import NDFloatArray
 #  function get_weight(::PIDCNetworkInference, i, j, scores, weights, nodes)
 #      score = scores[i, j]
 #      scores_i = vcat(scores[1:i-1, i], scores[i+1:end, i])
@@ -14,10 +14,13 @@ from .types import NDFloatArray
 #  end
 
 
-def get_pidc_weight(puc_scores: NDFloatArray, i:int, j: int):
-    score = puc_scores[(i, j)]
-    score_i = np.concat([puc_scores[:i, i], puc_scores[(i+1):, i]])
-    score_j = np.concat([puc_scores[:j, j], puc_scores[(j+1):, j]])
+# TODO:: pidc weight fit gamma distribution
+# def get_pidc_weight(puc_scores: NDFloatArray, i:int, j: int):
+#     score = puc_scores[(i, j)]
+#     score_i = np.concat([puc_scores[:i, i], puc_scores[(i+1):, i]])
+#     score_j = np.concat([puc_scores[:j, j], puc_scores[(j+1):, j]])
+#     # TODO:: fit gamma distribution
+#     pass
 
 
 #    function get_weight(::CLRNetworkInference, i, j, scores, weights, nodes)

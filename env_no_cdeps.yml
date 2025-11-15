@@ -7,18 +7,11 @@ dependencies:
   - python=3.12
   - pip
   #
-  # C/C++ Module dependencies
-  - openmpi-mpicc
-  - gxx_linux-64
-  - hdf5
-  #
   # python libs from conda-forge
   - basedpyright
   - dask
   - devtools
-  - h5py
   - jupyter
-  - mpi4py
   - numpy
   - pandas
   - polars
@@ -38,3 +31,4 @@ dependencies:
       - scanpy
       - xgboost
       - git+https://github.com/srirampc/codetiming
+      - --no-binary=mpi4py mpi4py

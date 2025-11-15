@@ -1,16 +1,15 @@
 import numpy as np
 import h5py
 
-from .comm_interface import default_comm
-
 from codetiming import Timer
 
-from .util import create_h5ds, flatten_npalist
-from .pidc import PIDCNode, PIDCPairData
-from .types import DiscretizerMethod, LogBase, NPDType, NDIntArray, NDFloatArray
+from ..types import DiscretizerMethod, LogBase, NPDType, NDIntArray, NDFloatArray
+from ..util import create_h5ds, flatten_npalist
+from ..comm_interface import default_comm
+from .rv import RVNode, RVPairData
 
 class MISIDataDistributed:
-    node_pairs:list[PIDCPairData]
+    node_pairs:list[RVPairData]
     disc_method: DiscretizerMethod = "bayesian_blocks"
     tbase: LogBase = '2'
     #
@@ -83,7 +82,7 @@ class MISIDataDistributed:
         for i in range(1, self.nvars):
             self.hist_dim_pfxe[i] = self.hist_dim_pfxe[i-1] + self.hist_dim[i-1]
 
-    def ___init_node_data(self, nodes: list[PIDCNode]):
+    def ___init_node_data(self, nodes: list[RVNode]):
         self.set_nodes_data(
             [nx.bins for nx in nodes],
             [nx.hist for nx in nodes],
@@ -96,7 +95,7 @@ class MISIDataDistributed:
             )
         self.nsi = int(np.sum(self.hist_dim)) * (self.nvars)
 
-    def __init_node_pairs_data(self, node_pairs: list[PIDCPairData]):
+    def __init_node_pairs_data(self, node_pairs: list[RVPairData]):
         self.__init_jv_index_auxds()
         comm_ifx = default_comm()
         self.local_npairs = len(node_pairs)
@@ -172,13 +171,14 @@ class MISIDataDistributed:
             data_grp["jv_start"][self.pindices] = self.jv_start   # pyright: ignore[ reportIndexIssue]
             data_grp["mi"][self.pindices] = self.mi   # pyright: ignore[reportIndexIssue]
             data_grp["pair_hist"][self.pair_hist_index] =  self.pair_hist # pyright: ignore[reportIndexIssue]
+            #TODO:: Distributed
             # for ridx, npx in enumerate(self.node_pairs):
             #     npair = npx.pidc_pair
             #     jv_start = self.jv_start[ridx]
             #     jv_size = self.jv_dim[ridx]
             #     jv_stop = jv_start + jv_size
-            #     data_grp["pair_hist"][jv_start:jv_stop] = npair.sthist.reshape(jv_size)  # pyright: ignore[reportIndexIssue]   
-            #     data_grp["pair_jvir"][jv_start:jv_stop] = npair.ljvi.reshape(jv_size)    # pyright: ignore[reportIndexIssue]
+            #     data_grp["pair_hist"][jv_start:jv_stop] = npair.sthist.reshape(jv_size)   
+            #     data_grp["pair_jvir"][jv_start:jv_stop] = npair.ljvi.reshape(jv_size)
             #     npx.pidc_pair.x_lmr
             #     npx.pidc_pair.y_lmr
             #     npx.pidc_pair.x_si
@@ -198,8 +198,8 @@ class MISIDataDistributed:
     @Timer(name="MISIDataDistributed::__init__", logger=None)
     def __init__(
         self,
-        nodes: list[PIDCNode],
-        node_pairs:list[PIDCPairData],
+        nodes: list[RVNode],
+        node_pairs:list[RVPairData],
         dshape: tuple[int, int],
         disc_method: DiscretizerMethod,
         tbase: LogBase,

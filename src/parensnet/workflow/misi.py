@@ -8,10 +8,10 @@ from codetiming import Timer
 
 from ..types import NDFloatArray, NDBoolArray 
 from ..comm_interface import CommInterface, default_comm
-from ..pidc import PIDCNode, PIDCPair, PIDCPairData, PIDCPairListData
-from ..misi import MISIData, MISIDataH5
-from ..distributed import MISIDataDistributed
 from ..util import triu_pair_to_index
+from ..mvim.rv import RVNode, RVNodePair, RVPairData, MRVNodePairs
+from ..mvim.misi import MISIData, MISIDataH5
+from ..mvim.distributed import MISIDataDistributed
 from .util import InputArgs, WorkDistributor
 
 def _log():
@@ -53,10 +53,10 @@ class MISIWorkflow:
             return node_data[self.cell_select, ix]
 
     @Timer(name="MISIWorkflow::construct_nodes_range", logger=None)
-    def construct_nodes_range(self, range_itr:range) -> list[PIDCNode]:
+    def construct_nodes_range(self, range_itr:range) -> list[RVNode]:
         node_data = self.mxargs.load_range_data(range_itr)
         return [
-            PIDCNode(
+            RVNode(
                 self.select_node_data(node_data, ix),
                 self.nobs,
                 self.mxargs.disc_method,
@@ -67,37 +67,41 @@ class MISIWorkflow:
         ]
 
     @Timer(name="MISIWorkflow::construct_nodes", logger=None)
-    def construct_nodes(self, pid:int) -> list[PIDCNode]:
+    def construct_nodes(self, pid:int) -> list[RVNode]:
         nodes = self.construct_nodes_range(self.wdistr.var_range(pid))
         return nodes
 
     @Timer(name="MISIWorkflow::construct_all_nodes", logger=None)
-    def construct_all_nodes(self) -> list[PIDCNode]:
+    def construct_all_nodes(self) -> list[RVNode]:
         return self.construct_nodes_range(range(self.mxargs.nvars))
 
     @Timer(name="MISIWorkflow::collect_nodes", logger=None)
-    def collect_nodes(self, nodes:list[PIDCNode]) -> list[PIDCNode]:
+    def collect_nodes(self, nodes:list[RVNode]) -> list[RVNode]:
         rnodes = self.comm.collect_merge_lists(nodes)
-        return t.cast(list[PIDCNode], rnodes)
+        return t.cast(list[RVNode], rnodes)
 
     @Timer(name="MISIWorkflow::save_nodes_to_h5", logger=None)
-    def save_nodes_to_h5(self, rnodes:list[PIDCNode]):
+    def save_nodes_to_h5(self, rnodes:list[RVNode]):
         if self.comm.rank == 0:
-            ppld = PIDCPairListData.from_pairs(rnodes, [])
-            misd = MISIData.from_pair_list_data(ppld)
-            misd.to_h5(self.misi_data_file)
+            import pickle
+            ppld = MRVNodePairs.from_pairs(rnodes, [])
+            misd = MISIData.from_pair_list_data(ppld, save_hist=False)
+            with open(self.mxargs.nodes_pickle, 'wb') as wfx:
+                #
+                pickle.dump(ppld, wfx)
+            #misd.to_h5(self.misi_data_file)
             del misd
             del ppld
         self.comm.barrier()
 
     @Timer(name="MISIWorkflow::collect_node_pairs", logger=None)
-    def collect_node_pairs(self, node_pairs:list[PIDCPairData]) -> list[PIDCPairData]:
+    def collect_node_pairs(self, node_pairs:list[RVPairData]) -> list[RVPairData]:
         return self.comm.collect_merge_lists_at_root(node_pairs, True)
 
     @Timer(name="MISIWorkflow::build_misi", logger=None)
     def build_misi(self,
-        nodes:list[PIDCNode],
-        node_pairs:list[PIDCPairData]
+        nodes:list[RVNode],
+        node_pairs:list[RVPairData]
     ):
         return MISIData.from_nodes_and_pairs(
             nodes,
@@ -105,6 +109,7 @@ class MISIWorkflow:
             (self.nobs, self.mxargs.nvars),
             self.mxargs.disc_method,
             self.mxargs.tbase,
+            save_hist=False,
         )
 
     @Timer(name="MISIWorkflow::gave_misi", logger=None)
@@ -114,18 +119,18 @@ class MISIWorkflow:
     @Timer(name="MISIWorkflow::construct_pairs_for_range", logger=None)
     def construct_pairs_for_range(
         self,
-        nodes: list[PIDCNode],
+        nodes: list[RVNode],
         px_range: tuple[range, range],
         px_data: tuple[NDFloatArray, NDFloatArray],
-    ) -> list[PIDCPairData]:
+    ) -> list[RVPairData]:
         row_range, col_range = px_range
         row_data, col_data = px_data
         return [
-            PIDCPairData(
+            RVPairData(
                 triu_pair_to_index(self.mxargs.nvars, rx, cx),
                 rx,
                 cx,
-                PIDCPair.from_nodes(
+                RVNodePair.from_nodes(
                     (nodes[rx], nodes[cx]),
                     (
                         self.select_node_data(row_data, i),
@@ -135,6 +140,7 @@ class MISIWorkflow:
                     self.mxargs.tbase,
                     np.float32,
                     np.int32,
+                    save_hist=False,
                 ),
             )
             for j, cx in enumerate(col_range) for i, rx in enumerate(row_range)
@@ -144,12 +150,13 @@ class MISIWorkflow:
     @Timer(name="MISIWorkflow::construct_node_pairs", logger=None)
     def construct_node_pairs(
         self,
-        nodes: list[PIDCNode]
-    ) -> list[PIDCPairData]:
+        nodes: list[RVNode]
+    ) -> list[RVPairData]:
         self.comm.barrier()
-        gpairs: list[list[PIDCPairData] | None] = [None] * self.wdistr.pair_nbatches
+        gpairs: list[list[RVPairData] | None] = [None] * self.wdistr.pair_nbatches
         #
         for bidx in range(self.wdistr.pair_nbatches):
+            self.comm.log_at_root(_log(), logging.DEBUG, f"Running Batch B{bidx} ")
             row_range = self.wdistr.pair_row_range(bidx, self.comm.rank)
             col_range = self.wdistr.pair_col_range(bidx, self.comm.rank)
             row_data, col_data = self.wdistr.load_pair_block_data(bidx, self.comm.rank)
@@ -171,8 +178,8 @@ class MISIWorkflow:
     @Timer(name="MISIWorkflow::save_misi_distributed", logger=None)
     def save_misi_distributed(
         self,
-        nodes: list[PIDCNode],
-        node_pairs: list[PIDCPairData]
+        nodes: list[RVNode],
+        node_pairs: list[RVPairData]
     ):
         distr_misi =  MISIDataDistributed(
             nodes,
@@ -186,19 +193,24 @@ class MISIWorkflow:
     @Timer(name="MISIWorkflow::save_misi_at_root", logger=None)
     def save_misi_at_root(
         self,
-        nodes: list[PIDCNode],
-        node_pairs: list[PIDCPairData]
+        nodes: list[RVNode],
+        node_pairs: list[RVPairData]
     ):
+        import pickle
         rnpairs = self.collect_node_pairs(node_pairs)
         self.comm.log_at_root(_log(), logging.DEBUG, f"rnpairs ::  {len(rnpairs)}" )
         del node_pairs
         rnpairs.sort(key=lambda x: x.pindex)
+        with open(self.mxargs.nodes_pickle, 'wb') as wfx:
+                pickle.dump(nodes, wfx)
+        with open(self.mxargs.nodes_pairs_pickle, 'wb') as wfx:
+                pickle.dump(rnpairs, wfx)
         if self.comm.rank == 0:
             mdata = self.build_misi(nodes, rnpairs)
             self.save_misi(mdata)
 
     @Timer(name="MISIWorkflow::save_misih5", logger=None)
-    def save_misih5(self, node_pairs:list[PIDCPairData]):
+    def save_misih5(self, node_pairs:list[RVPairData]):
         for ix in range(self.comm.size):
             self.comm.barrier()
             if ix == self.comm.rank:
@@ -207,12 +219,14 @@ class MISIWorkflow:
                         misih5.set_pair_data(pindex, i, j, npair)
             self.comm.barrier()
 
-    def log_list(self, lprefix: str, lst: list[t.Any]):
+    def log_list_sizes(self, lprefix: str, lst: list[t.Any]):
         tlst = self.comm.collect_counts(len(lst))
-        self.comm.log_at_root(
-            _log(), logging.DEBUG, "%s    :: %s ",
-            lprefix, pformat({"distr": tlst, "count": sum(tlst)})
-        )
+        if self.comm.rank == 0:
+            tarr = np.array(tlst)
+            self.comm.log_at_root(
+                _log(), logging.DEBUG, "%s    :: %s ",
+                lprefix, pformat({"distr": tarr, "count": sum(tlst)})
+            )
 
     @Timer(name="MISIWorkflow::run", logger=None)
     def run(self):
@@ -221,10 +235,12 @@ class MISIWorkflow:
         #
         nodes = []
         nodes = self.construct_nodes(self.comm.rank)
-        self.log_list("Nodes", nodes) 
+        self.comm.barrier()
+        self.log_list_sizes("Nodes", nodes) 
         nodes = self.collect_nodes(nodes)
-        if self.mxargs.save_nodes and not self.mxargs.save_node_pairs:
-            self.save_nodes_to_h5(nodes)
+        # if self.mxargs.save_nodes and not self.mxargs.save_node_pairs:
+        #    self.save_nodes_to_h5(nodes)
+        # return
         # nodes = t.cast(list[PIDCNode], nodes)
         #
         # with open(mxargs.nodes_pickle, 'rb') as fx:
@@ -233,7 +249,8 @@ class MISIWorkflow:
         self.comm.log_at_root(_log(), logging.DEBUG, "Total Nodes :: %d", len(nodes)) 
         #
         node_pairs = self.construct_node_pairs(nodes)
-        self.log_list("Node Pairs", node_pairs) 
+        self.comm.barrier()
+        self.log_list_sizes("Node Pairs", node_pairs) 
         node_pairs.sort(key=lambda x: x.pindex)
         #
         if self.mxargs.save_node_pairs:
