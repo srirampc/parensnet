@@ -1,0 +1,299 @@
+import typing as t, json,  itertools
+import numpy as np, numpy.testing as nptest, anndata as an
+import pytest
+from parensnet.types import LogBase, DiscretizerMethod, NDFloatArray, NPDType
+from parensnet.mvim.rv import MRVInterface, MRVNodePairs
+from parensnet.mvim.misi import MISIData
+import logging
+
+def _log():
+    return logging.getLogger(__name__)
+
+def compare_nodes(
+    sub_puc_data: dict[str, t.Any],
+    ppidcif: MRVInterface,
+) -> tuple[list[np.float32], list[bool]]:
+    nprob_errs = []
+    nprob_eq = []
+    nnodes = len(sub_puc_data['nodes'])
+    for j  in range(ppidcif.nvariables):
+        jnx = sub_puc_data['nodes'][j]
+        phist = ppidcif.get_hist(j)
+        nprob = phist / ppidcif.ndata
+        assert len(nprob) == jnx['number_of_bins']
+        nprob_errs.append(np.max(nprob - jnx['probabilities']))
+        nprob_eq.append(
+            (len(nprob) == jnx['number_of_bins']) and
+            np.all(np.isclose(nprob, jnx['probabilities']))
+        )
+    _log().debug("Node Err : [%s]", ",".join(map(str, nprob_errs)))
+    _log().debug("Node Eq. : [%s]", ",".join(map(str, nprob_eq)))
+    return nprob_errs, nprob_eq
+
+def compare_node_pairs(
+    sub_puc_data: dict[str, t.Any],
+    ppidcif: MRVInterface,
+) -> tuple[list[np.float32], list[bool]]:
+    npair_errs = []
+    npair_eq = []
+    jnpairs = sub_puc_data['node_pairs']
+    nvars = ppidcif.nvariables
+    for keyx  in itertools.combinations(range(nvars), 2):
+        s,t = keyx
+        jnp1 = jnpairs[s][t]
+        jnp2 = jnpairs[t][s]
+        npair_errs.append((
+            (jnp1['mi'] - ppidcif.get_mi(s, t)),
+            np.max(jnp1['si'] - ppidcif.get_si(about=s, by=t)),
+            np.max(jnp2['si'] - ppidcif.get_si(about=t, by=s)),
+        ))
+        npair_eq.append((
+            np.isclose(jnp1['mi'],  ppidcif.get_mi(s, t)) and
+            np.all(np.isclose(jnp1['si'], ppidcif.get_si(about=s, by=t))) and
+            np.all(np.isclose(jnp2['si'], ppidcif.get_si(about=t, by=s)))
+        ))
+    print("Node Pair Errors :", ",".join(map(str, npair_errs)))
+    print("Node Pair Eq :", ",".join(map(str, npair_eq)))
+    return npair_errs, npair_eq
+
+def compare_with_pidc(
+    sub_puc_data: dict[str, t.Any],
+    ppidcif: MRVInterface,
+    network: NDFloatArray,
+):
+    nprob_errs, nprob_eq = compare_nodes(sub_puc_data, ppidcif)
+    npair_errs, npair_eq = compare_node_pairs(sub_puc_data, ppidcif)
+    pcnet = np.array(sub_puc_data['puc_scores'])
+    net_eq = np.isclose(network, pcnet)
+    print("Network Equals :: ", str(net_eq))
+    return bool(np.all(np.array(nprob_eq)) and
+                np.all(np.array(npair_eq)) and
+                np.all(net_eq))
+
+class PUCTestData:
+    def __init__(
+        self,
+        nroundup: int=4,
+        nvars: int=4,
+        nobs_list: tuple[int,...] = (1000, 10000),
+        puc_json: str="data/puc_test_data_1Kx4_10Kx4.json",
+        h5ad_file: str="data/pbmc_puc_test.h5ad",
+        out_dir: str="/localscratch/schockalingam6/tmp/"
+    ):
+        self.disc_method: DiscretizerMethod ="bayesian_blocks"
+        self.tbase: LogBase='2'
+        self.dtype: NPDType = np.float32
+        self.int_dtype: NPDType = np.int32
+        self.nvars: int = nvars
+        self.puc_data: dict[int, t.Any] = {}
+        json_data = {}
+        with open(puc_json) as fx:
+            json_data = json.load(fx)
+        jkeys = list(json_data.keys())
+        for kx in jkeys:
+            self.puc_data[int(kx)] =  json_data[kx]
+        self.out_dir:str = out_dir
+
+        adata = an.read_h5ad(h5ad_file, 'r')
+        self.afdata: dict[int, NDFloatArray] = {}
+        self.nobs_list: list[int] = list(nobs_list)
+        for nobs in self.nobs_list:
+            self.afdata[nobs] = np.round(adata.X[:nobs, :self.nvars], # pyright: ignore[reportCallIssue, reportArgumentType]
+                                         nroundup)
+        adata.file.close()
+
+
+
+class TestClass:
+
+    @pytest.fixture
+    def ptdata(self) -> PUCTestData:
+        return PUCTestData()
+
+    def test_a_puc(self, ptdata: PUCTestData, subtests: pytest.Subtests):
+        logging.basicConfig(level=logging.DEBUG)
+        for nobs in ptdata.nobs_list:
+            sub_data = ptdata.afdata[nobs][:nobs, :ptdata.nvars]
+            nobs, nvars = sub_data.shape
+            with subtests.test(i=nobs):
+                ppairsl = MRVNodePairs.from_data(
+                    sub_data,
+                    (nobs, nvars),
+                    ptdata.disc_method,
+                    ptdata.tbase,
+                    ptdata.dtype,
+                    ptdata.int_dtype
+                )
+                sub_ref_data = ptdata.puc_data[nobs]
+                _nprob_errs, nprob_eq = compare_nodes(sub_ref_data, ppairsl)
+                assert nprob_eq == [True for _ in range(nvars)]
+                #nptest.assert_array_equal(nprob_eq, [True for _ in range(nvars)])
+                cmp_eq = [True for _ in itertools.combinations(range(nvars), 2)]
+                _npair_errs, npair_eq = compare_node_pairs(sub_ref_data, ppairsl)
+                assert cmp_eq == npair_eq
+
+    def test_b_puc_network(self, ptdata: PUCTestData, subtests: pytest.Subtests):
+        for nobs in ptdata.nobs_list:
+            sub_data = ptdata.afdata[nobs][:nobs, :ptdata.nvars]
+            nobs, nvars = sub_data.shape
+            with subtests.test(i=nobs):
+                ppairsl = MRVNodePairs.from_data(
+                    sub_data,
+                    (nobs, nvars),
+                    ptdata.disc_method,
+                    ptdata.tbase,
+                    ptdata.dtype,
+                    ptdata.int_dtype
+                )
+                #
+                ref_net = np.array(ptdata.puc_data[nobs]['puc_scores'])
+                full_net = ppairsl.compute_puc_matrix(ptdata.dtype)
+                nptest.assert_array_almost_equal(full_net, ref_net)
+                rlist = list(range(nvars))
+                for_net = ppairsl.compute_puc_matrix_for(rlist, ptdata.dtype)
+                nptest.assert_array_almost_equal(for_net, ref_net)
+
+    def test_c_misi(self, ptdata: PUCTestData, subtests: pytest.Subtests):
+        for nobs in ptdata.nobs_list:
+            sub_data = ptdata.afdata[nobs][:nobs, :ptdata.nvars]
+            nobs, nvars = sub_data.shape
+            with subtests.test(i=nobs):
+                ppairsl = MRVNodePairs.from_data(
+                    sub_data,
+                    (nobs, nvars),
+                    ptdata.disc_method,
+                    ptdata.tbase,
+                    ptdata.dtype,
+                    ptdata.int_dtype
+                )
+                misidd = MISIData.from_pair_list_data(ppairsl)
+                sub_ref_data = ptdata.puc_data[nobs]
+                _nprob_errs, nprob_eq = compare_nodes(sub_ref_data, misidd)
+                assert [True for _ in range(nvars)] == nprob_eq
+                cmp_eq = [True for _ in itertools.combinations(range(nvars), 2)]
+                _npair_errs, npair_eq = compare_node_pairs(sub_ref_data, misidd)
+                assert cmp_eq == npair_eq
+
+    def test_d_misi_network(self, ptdata: PUCTestData, subtests: pytest.Subtests):
+        for nobs in ptdata.nobs_list:
+            sub_data = ptdata.afdata[nobs][:nobs, :ptdata.nvars]
+            nobs, nvars = sub_data.shape
+            with subtests.test(i=nobs):
+                ppairslt = MRVNodePairs.from_data(
+                    sub_data,
+                    (nobs, nvars),
+                    ptdata.disc_method,
+                    ptdata.tbase,
+                    ptdata.dtype,
+                    ptdata.int_dtype
+                )
+                misidd = MISIData.from_pair_list_data(ppairslt)
+                #
+                ref_net = np.array(ptdata.puc_data[nobs]['puc_scores'])
+                full_net = misidd.compute_puc_matrix(ptdata.dtype)
+                nptest.assert_array_almost_equal(full_net, ref_net)
+                rlist = list(range(nvars))
+                for_net = misidd.compute_puc_matrix_for(rlist, ptdata.dtype)
+                nptest.assert_array_almost_equal(for_net, ref_net)
+
+    # def compare(self, nobs: int):
+    #     stnobs = str(nobs)
+    #     if stnobs in self.puc_data:
+    #         pudx = self.puc_data[stnobs]
+    #         ppairsl = self.ppairsld[nobs]
+    #         pmisdd = self.misdd[nobs]
+    #         netx, net_for, mnetx, mnet_for = self.pucmd[nobs]
+    #         self.cmpdx[nobs] = (
+    #             compare_with_pidc(pudx, ppairsl, netx),
+    #             compare_with_pidc(pudx, ppairsl, net_for),
+    #             compare_with_pidc(pudx, pmisdd, mnetx),
+    #             compare_with_pidc(pudx, pmisdd, mnet_for),
+    #         )
+
+    # def build_network(self, nobs: int):
+    #     ppairsl = self.ppairsld[nobs]
+    #     pmisdd = self.misdd[nobs]
+    #     self.reddx[nobs] = (
+    #         ppairsl.compute_redundancies(),
+    #         pmisdd.compute_redundancies(),
+    #     )
+    #     rlist = list(range(self.nvars))
+    #     self.pucmd[nobs] = (
+    #         ppairsl.compute_puc_matrix(self.dtype),
+    #         ppairsl.compute_puc_matrix_for(rlist, self.dtype),
+    #         pmisdd.compute_puc_matrix(self.dtype),
+    #         pmisdd.compute_puc_matrix_for(rlist, self.dtype),
+    #     )
+
+    # def init_ds(self, nobs:int):
+    #     sub_data = self.tdata.afdata[nobs][:nobs, :self.tdata.nvars]
+    #     nobs, nvars = sub_data.shape
+    #     ppairsl = MRVNodePairs.from_data(
+    #         sub_data,
+    #         (nobs, nvars),
+    #         self.disc_method,
+    #         self.tbase,
+    #         self.dtype,
+    #         self.int_dtype
+    #     )
+    #     self.misdd[nobs] = MISIData.from_pair_list_data(ppairsl)
+    #     self.ppairsld[nobs] = ppairsl
+
+    #     # nplx_hund = generate_node_pairs(self.afhund, None, self.nvars)
+    #     # nplx_thou = generate_node_pairs(self.afthou, None, self.nvars)
+    #     # nplx_tenk = generate_node_pairs(self.aftenk, None, self.nvars)
+    #     # misd_hund = ppidc.MISIData.from_pair_list_data(nplx_hund)
+    #     # misd_thou = ppidc.MISIData.from_pair_list_data(nplx_thou)
+    #     # misd_tenk = ppidc.MISIData.from_pair_list_data(nplx_tenk)
+
+
+    # def run(self):
+    #     for nobs in self.nobs_list:
+    #         self.init_ds(nobs)
+
+    #     for nobs in self.nobs_list:
+    #         self.build_network(nobs)
+
+    #     for nobs in self.nobs_list:
+    #         self.compare(nobs)
+
+    #     for nobs in self.nobs_list:
+    #         out_file = f"{self.out_dir}/misd_{nobs}.h5"
+    #         self.misdd[nobs].to_h5(out_file)
+
+    #     # red_thou = nplx_thou.compute_redundancies()
+    #     # net_thou = nplx_thou.compute_puc_matrix(afthou.dtype)
+    #     # net_sub_thou = nplx_thou.compute_puc_matrix_for(list(range(4)), afthou.dtype)
+    #     # compare_with_pidc(puc_data['1000'], nplx_thou, net_thou)
+    #     # compare_with_pidc(puc_data['1000'], nplx_thou, net_sub_thou)
+    #     #
+    #     # red_tenk = nplx_tenk.compute_redundancies()
+    #     # net_tenk = nplx_tenk.compute_puc_matrix(aftenk.dtype)
+    #     # net_sub_tenk = nplx_tenk.compute_puc_matrix_for(list(range(4)), aftenk.dtype)
+    #     #
+    #     # misd_red_thou = misd_thou.compute_redundancies()
+    #     # misd_net_thou = misd_thou.compute_puc_matrix(afthou.dtype)
+    #     # misd_net_sub_thou = misd_thou.compute_puc_matrix_for(list(range(4)), afthou.dtype)
+    #     # compare_with_pidc(puc_data['1000'], misd_thou, misd_net_thou)
+    #     # compare_with_pidc(puc_data['1000'], misd_thou, misd_net_sub_thou)
+    #
+    #     # misd_red_tenk = misd_tenk.compute_redundancies()
+    #     # misd_net_tenk = misd_tenk.compute_puc_matrix(aftenk.dtype)
+    #     # misd_net_sub_tenk = misd_tenk.compute_puc_matrix_for(list(range(4)), aftenk.dtype)
+    #     # compare_with_pidc(puc_data['10000'], misd_tenk, misd_net_tenk)
+    #     # compare_with_pidc(puc_data['10000'], misd_tenk, misd_net_sub_tenk)
+    #
+    #     # misd_thou.to_h5("/localscratch/schockalingam6/tmp/misd_thou.h5")
+    #     # txmisd_thou = ppidc.MISIData.from_h5("/localscratch/schockalingam6/tmp/misd_thou.h5")
+
+    #     # txmisd_net_thou = txmisd_thou.compute_puc_matrix(afthou.dtype)
+        # txmisd_net_sub_thou = txmisd_thou.compute_puc_matrix_for(list(range(4)), afthou.dtype)
+        # compare_with_pidc(puc_data['1000'], txmisd_thou, txmisd_net_thou)
+        # compare_with_pidc(puc_data['1000'], txmisd_thou, txmisd_net_sub_thou)
+
+        # misd_tenk.to_h5("/localscratch/schockalingam6/tmp/misd_tenk.h5")
+        # txmisd_tenk = ppidc.MISIData.from_h5("/localscratch/schockalingam6/tmp/misd_tenk.h5")
+        # txmisd_net_tenk = txmisd_tenk.compute_puc_matrix(aftenk.dtype)
+        # txmisd_net_sub_tenk = txmisd_tenk.compute_puc_matrix_for(list(range(4)), aftenk.dtype)
+        # compare_with_pidc(puc_data['10000'], txmisd_tenk, txmisd_net_tenk)
+        # compare_with_pidc(puc_data['10000'], txmisd_tenk, txmisd_net_sub_tenk)
