@@ -7,7 +7,9 @@ import numpy as np
 import pydantic
 import anndata as an
 
+from enum import Enum
 from codetiming import Timer, TimerConfig
+
 from ..types import (
     NDIntArray, NDFloatArray, 
     DiscretizerMethod, LogBase, DataPair, IDDTuple, NPDType
@@ -22,9 +24,18 @@ LogLevel : t.TypeAlias = t.Literal[
 ]
 
 RunMode : t.TypeAlias = t.Literal[
-    'sampled_puc_pairs', 'samples_ranges', 'samples_input', 
-    'misi', 'puc_ranges', 'puc_lmr', 'puc2pidc', 'puc_union',
+    'misi',
+    'sampled_puc_pairs',
+    'samples_ranges',
+    'samples_input', 
+    'samples_lmr_ranges',
+    'samples_lmr_input', 
+    'puc_ranges',
+    'puc_lmr',
+    'puc2pidc',
+    'puc_union',
     'cluster_union',
+    'cluster_lmr_union',
 ]
 
 LOG_LEVEL_MAP: dict[LogLevel, int] = {
@@ -35,6 +46,10 @@ LOG_LEVEL_MAP: dict[LogLevel, int] = {
     'ERROR': logging.ERROR,
     'CRITICAL': logging.CRITICAL
 }
+
+class PUCMethod(Enum):
+    REDUNDANCY = 0
+    LMR = 1
 
 def getenv(env_name: str):
     if env_name in os.environ:
@@ -61,6 +76,7 @@ def collect_iddtuples(
             full_values = np.concatenate(all_values)
     comm_ifx.barrier()
     return IDDTuple(full_indices, full_values)
+
 def iddtuple_to_h5(
     idd_tuple: IDDTuple,
     output_file: str,

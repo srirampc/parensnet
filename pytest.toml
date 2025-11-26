@@ -1,0 +1,3 @@
+# content of pytest.toml
+[pytest]
+addopts = ["--import-mode=importlib"]

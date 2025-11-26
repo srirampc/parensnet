@@ -410,12 +410,17 @@ class MRVInterface(ABC):
         ], self.float_dtype())
         return np.sum(min_sum_list)
 
+    def get_puc_factor(self, about: int, target:int): # pyright: ignore[reportUnusedParameter]
+        return np.float32(self.nvariables - 2).astype(self.float_dtype())
+
     def compute_lmr_puc(self, i:int, j:int):
         mij = self.get_mi(i, j)
-        mi_factor = mij * (self.nvariables - 2)
+        if mij == 0:
+            return np.float32(0.0).astype(self.float_dtype())
+        mi_factor = self.get_puc_factor(i, j)
         return (
-            ( (mi_factor - self.get_lmr_minsum(i, j)) / mij ) +
-            ( (mi_factor - self.get_lmr_minsum(j, i)) / mij )
+            ( mi_factor - (self.get_lmr_minsum(i, j) / mij) ) +
+            ( mi_factor - (self.get_lmr_minsum(j, i) / mij) )
         )
  
 
@@ -621,20 +626,20 @@ class LMRDataStructure:
         si_values_list = self._sort_si_values(si_values_list)
         self._build_ds(si_values_list)
 
-    def minsum_list(self, src: int) -> NDFloatArray:
-        rstates = np.arange(self.dim)
-        rs_begin = np.multiply(rstates, self.nvars)
-        src_ranks = self.lmr_rank[np.add(rs_begin, src)]
-        src_locs = np.add(rs_begin, src_ranks)
-        lmr_lows = self.lmr_pfxsum[np.subtract(src_locs, 1)]
-        lmr_highs = np.multiply(
-            self.lmr_sorted[src_locs],
-            np.subtract(self.nvars - 1, src_ranks)
-        )
-        lmr_states = lmr_lows + lmr_highs
-        return lmr_states
+    # def minsum_list(self, src: int) -> NDFloatArray:
+    #     rstates = np.arange(self.dim)
+    #     rs_begin = np.multiply(rstates, self.nvars)
+    #     src_ranks = self.lmr_rank[np.add(rs_begin, src)]
+    #     src_locs = np.add(rs_begin, src_ranks)
+    #     lmr_lows = self.lmr_pfxsum[np.subtract(src_locs, 1)]
+    #     lmr_highs = np.multiply(
+    #         self.lmr_sorted[src_locs],
+    #         np.subtract(self.nvars - 1, src_ranks)
+    #     )
+    #     lmr_states = lmr_lows + lmr_highs
+    #     return lmr_states
 
-    def lmr_minsum_vec(self, src:int):
+    def minsum_vec(self, src:int):
         rstates = np.arange(self.dim)
         rs_begin = np.multiply(rstates, self.nvars)
         src_ranks = self.lmr_rank[np.add(rs_begin, src)]
@@ -648,7 +653,7 @@ class LMRDataStructure:
         #return src_ranks, lmr_lows, lmr_highs, lmr_states
         return np.sum(lmr_states)
 
-    def lmr_minsum_iter(self, src:int):
+    def minsum_iter(self, src:int):
         rdsum = np.float32(0).astype(self.lmr_sorted.dtype)
         lmvalues = np.zeros(self.dim, self.lmr_sorted.dtype)
         lmsums = np.zeros(self.dim, self.lmr_sorted.dtype)
@@ -664,8 +669,11 @@ class LMRDataStructure:
         return rdsum
 
     def lmr_minsum(self, src:int):
-        # print(lmvalues, lmsums)
-        return self.lmr_minsum_vec(src)
+        # return self.minsum_iter(src)
+        return self.minsum_vec(src)
+
+    def mi_factor(self, target:int):
+        return self.nvars - 2
 
 @t.final
 class LMRSubsetDataStructure:
@@ -739,27 +747,19 @@ class LMRSubsetDataStructure:
         si_values_list = self._sort_si_values(si_values_list)
         self._build_ds(si_values_list)
 
-    def minsum_list(self, src_var: int) -> NDFloatArray:
+    def minsum_wsrc_vec(self, src_var:int):
+        # Case when  src_var is found in the map
         src_idx = self.subset_map[src_var]
         rstates = np.arange(self.dim)
         rs_begin = np.multiply(rstates, self.nvars)
+        # Ranks 
         src_ranks = self.lmr_rank[np.add(rs_begin, src_idx)]
         src_locs = np.add(rs_begin, src_ranks)
-        lmr_lows = self.lmr_pfxsum[np.subtract(src_locs, 1)]
-        lmr_highs = np.multiply(
-            self.lmr_sorted[src_locs],
-            np.subtract(self.nvars - 1, src_ranks)
-        )
-        lmr_states = lmr_lows + lmr_highs
-        return lmr_states
-
-    def lmr_minsum_stvec(self, src_var:int):
-        src_idx = self.subset_map[src_var]
-        rstates = np.arange(self.dim)
-        rs_begin = np.multiply(rstates, self.nvars)
-        src_ranks = self.lmr_rank[np.add(rs_begin, src_idx)]
-        src_locs = np.add(rs_begin, src_ranks)
-        lmr_lows = self.lmr_pfxsum[np.subtract(src_locs, 1)]
+        # Low indices:  vars whose LMR is lower than that of src
+        lmr_lows = np.zeros(self.dim, dtype=self.lmr_pfxsum.dtype) 
+        rank_ind = src_ranks > 0
+        lmr_lows[rank_ind] = self.lmr_pfxsum[np.subtract(src_locs[rank_ind], 1)]
+        # High indices:  vars whose LMR is higher than that of src
         lmr_highs = np.multiply(
             self.lmr_sorted[src_locs],
             np.subtract(self.nvars - 1, src_ranks)
@@ -768,23 +768,48 @@ class LMRSubsetDataStructure:
         #return src_ranks, lmr_lows, lmr_highs, lmr_states
         return np.sum(lmr_states)
 
-    def lmr_minsum_stiter(self, src_var:int):
+    def minsum_wsrc_iter(self, src_var:int):
         src_idx = self.subset_map[src_var]
         rdsum = np.float32(0).astype(self.lmr_sorted.dtype)
-        lmvalues = np.zeros(self.dim, self.lmr_sorted.dtype)
-        lmsums = np.zeros(self.dim, self.lmr_sorted.dtype)
+        # lmvalues = np.zeros(self.dim, self.lmr_sorted.dtype)
+        # lmsums = np.zeros(self.dim, self.lmr_sorted.dtype)
         for rs in range(self.dim):
-            rsbegin = rs * self.nvars
+            rsbegin = rs * self.nvars 
             lmrank = self.lmr_rank[rsbegin + src_idx]
-            lmlow = self.lmr_pfxsum[rsbegin + lmrank - 1]
-            lmhigh = (self.nvars - 1 - lmrank) * self.lmr_sorted[rsbegin + lmrank]
-            lmvalues[rs] = lmhigh
-            lmsums[rs] = lmlow
+            lmv = self.lmr_sorted[rsbegin + lmrank]
+            lmlow = self.lmr_pfxsum[rsbegin + lmrank - 1] if lmrank > 0 else 0.0
+            lmhigh = (self.nvars - 1 - lmrank) * lmv
+            # lmvalues[rs] = lmhigh
+            # lmsums[rs] = lmlow
             rdsum += lmlow + lmhigh
         # print(lmvalues, lmsums)
         return rdsum
 
-    def lmr_minsum_rxiter(self, src_var:int) -> FloatT:
+    def minsum_nosrc_vec(self, src_var:int) -> FloatT:
+        # Case when  src_var is not found in the subset_map
+        lm_vec = self.pidata.get_lmr(self.about, src_var)
+        #
+        rstates = np.arange(self.dim)
+        rs_begin = np.multiply(rstates, self.nvars)
+        rs_end = np.add(rs_begin, self.nvars)
+        # get ranks by searching for the lmr values in the sorted list
+        rnk_gen: Generator[int] = (
+            np.searchsorted(self.lmr_sorted[range(rsb, rse)], lmv)
+            for (rsb, rse, lmv) in zip(rs_begin, rs_end, lm_vec)
+        )
+        lmr_ranks = np.fromiter(rnk_gen, dtype=np.int32)
+        lmr_locs = np.add(rs_begin, lmr_ranks)
+        # Low indices:  vars whose LMR is lower than that of src
+        lmr_lows = np.zeros(lmr_locs.size, dtype=self.lmr_sorted.dtype)
+        ind_locs = lmr_ranks > 0
+        lmr_lows[ind_locs] = self.lmr_pfxsum[np.subtract(lmr_locs[ind_locs], 1)]
+        # High indices:  vars whose LMR is higher than that of src
+        lmr_highs = np.multiply(lm_vec, np.subtract(self.nvars, lmr_ranks))
+        lmr_states = lmr_lows + lmr_highs
+        rdsum = np.sum(lmr_states).astype(self.lmr_sorted.dtype)
+        return rdsum
+    
+    def minsum_nosrc_iter(self, src_var:int) -> FloatT:
         lmd = self.pidata.get_lmr(self.about, src_var)
         rdsum = np.float32(0).astype(self.lmr_sorted.dtype)
         for rs in range(self.dim):
@@ -794,43 +819,28 @@ class LMRSubsetDataStructure:
             # Find rank of lmv in
             lmrank = np.searchsorted(
                 self.lmr_sorted[range(rsbegin, rsend)],
-                lmv
+                lmv,
             )
             lmlow = self.lmr_pfxsum[rsbegin + lmrank - 1] if lmrank > 0 else 0.0
             lmhigh = (self.nvars - lmrank) * lmv
             rdsum += lmlow + lmhigh
         return rdsum
 
-    def lmr_minsum_rxvec(self, src_var:int) -> FloatT:
-        lm_vec = self.pidata.get_lmr(self.about, src_var)
-        #
-        rstates = np.arange(self.dim)
-        rs_begin = np.multiply(rstates, self.nvars)
-        rs_end = np.add(rs_begin, self.nvars)
-        #
-        rnk_gen: Generator[int] = (
-            np.searchsorted(self.lmr_sorted[range(rsb, rse)], lmv)
-            for (rsb, rse, lmv) in zip(rs_begin, rs_end, lm_vec)
-        )
-        src_ranks = np.fromiter(rnk_gen, dtype=np.int32)
-        src_locs = np.add(rs_begin, src_ranks)
-        lmr_lows = np.zeros(src_locs.size, dtype=self.lmr_sorted.dtype)
-        ll_locs = src_locs > 0
-        lmr_lows[ll_locs] = self.lmr_pfxsum[np.subtract(src_locs[ll_locs], 1)]
-        lmr_highs = np.multiply(lm_vec, np.subtract(self.nvars, src_ranks))
-        lmr_states = lmr_lows + lmr_highs
-        rdsum = np.sum(lmr_states).astype(self.lmr_sorted.dtype)
-        return rdsum
-
-    def lmr_minsum_iter(self, src_var:int):
+    def minsum_iter(self, src_var:int):
         if src_var in self.subset_map:
-            return self.lmr_minsum_stiter(src_var)
-        return self.lmr_minsum_rxiter(src_var)
-
-    def lmr_minsum_vec(self, src_var:int):
+            return self.minsum_wsrc_iter(src_var)
+        return self.minsum_nosrc_iter(src_var)
+    
+    def minsum_vec(self, src_var:int):
         if src_var in self.subset_map:
-            return self.lmr_minsum_stvec(src_var)
-        return self.lmr_minsum_rxvec(src_var)
+            return self.minsum_wsrc_vec(src_var)
+        return self.minsum_nosrc_vec(src_var)
 
     def lmr_minsum(self, src_var:int):
-        return self.lmr_minsum_vec(src_var)
+        return self.minsum_vec(src_var)
+
+    def mi_factor(self, target:int):
+        return self.nvars - (
+            int(self.about in self.subset_map) + 
+            int(target in self.subset_map)  
+        )

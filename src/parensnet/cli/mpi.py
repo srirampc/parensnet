@@ -10,9 +10,9 @@ from codetiming import Timer
 #
 from ..types import NDIntArray, NDBoolArray, NDObjectArray
 from ..comm_interface import CommInterface, default_comm
-from ..workflow.util import InputArgs, WorkDistributor, getenv
+from ..workflow.util import InputArgs, PUCMethod, WorkDistributor, getenv
 from ..workflow.misi import MISIWorkflow
-from ..workflow.puc import FullPUCWorkflow, SPUCWorkflow
+from ..workflow.puc import LMRPUCWorkflow, SPUCWorkflow
 from ..workflow.context import ContextWorkflow
 from ..workflow.union import PUCUnionWorkflow
 
@@ -43,8 +43,8 @@ class ClusterUnionWorkflow:
         self.clust_labels = luniq.values[cselected]
 
     @Timer(name="ClusterUnionWorkflow::run", logger=None)
-    def run(self):
-        self.clust_labels = self.clust_labels[10:]
+    def run(self, lmr_workflow:bool = False):
+        self.clust_labels = self.clust_labels[:3]
         mfiles = [f"{self.mxargs.wflow_dir}/misi_C{str(clabel)}.h5" for clabel in self.clust_labels]
         pfiles = [f"{self.mxargs.wflow_dir}/puc_C{str(clabel)}.h5" for clabel in self.clust_labels]
         #pdfiles = [f"{self.mxargs.temp_dir}/pidc_C{str(clabel)}.h5" for clabel in self.clust_labels]
@@ -58,12 +58,18 @@ class ClusterUnionWorkflow:
                 "Start  Run for Cluster : %s", str(clabel)
             )
             cxselect: NDBoolArray = self.cell_labels == clabel
-            misiwf = MISIWorkflow(self.mxargs, self.wdistr, cxselect, misi_file)
-            misiwf.run()
+            #misiwf = MISIWorkflow(self.mxargs, self.wdistr, cxselect, misi_file)
+            #misiwf.run()
+            #self.comm.barrier()
+            if lmr_workflow:
+                fpucwf = LMRPUCWorkflow(self.mxargs, self.wdistr,
+                                        misi_file, puc_file)
+                fpucwf.run_with_ranges()
+            else:
+                spucwf = SPUCWorkflow(self.mxargs, self.wdistr, misi_file,
+                                      puc_file, puc_method=PUCMethod.LMR)
+                spucwf.run_with_ranges(True, None)
             self.comm.barrier()
-            # spucwf = SPUCWorkflow(self.mxargs, self.wdistr, misi_file, puc_file)
-            # spucwf.run_with_ranges(True)
-            # self.comm.barrier()
             
         # punion = PUCUnionWorkflow(self.mxargs, self.wdistr, pfiles)
         # punion.run()
@@ -105,19 +111,29 @@ def main(mxargs: InputArgs):
             case 'sampled_puc_pairs':
                 SPUCWorkflow(mxargs, wdistr).run_with_pairs()
             case 'samples_ranges':
-                SPUCWorkflow(mxargs, wdistr).run_with_ranges(True)
+                SPUCWorkflow(mxargs, wdistr).run_with_ranges(True, None)
+            case 'samples_lmr_ranges':
+                SPUCWorkflow(
+                    mxargs, wdistr, puc_method=PUCMethod.LMR
+                ).run_with_ranges(True, None)
             case 'samples_input':
-                SPUCWorkflow(mxargs, wdistr).run_with_ranges(False)
+                SPUCWorkflow(mxargs, wdistr).run_with_ranges(False, mxargs.samples_file)
+            case 'samples_lmr_input':
+                SPUCWorkflow(
+                    mxargs, wdistr, puc_method=PUCMethod.LMR
+                ).run_with_ranges(False, mxargs.samples_file)
             case 'puc_ranges':
-                SPUCWorkflow(mxargs, wdistr).run_with_ranges(False)
+                SPUCWorkflow(mxargs, wdistr).run_with_ranges(False, None)
             case 'puc_lmr':
-                FullPUCWorkflow(mxargs, wdistr).run_with_ranges()
+                LMRPUCWorkflow(mxargs, wdistr).run_with_ranges()
             case 'puc_union':
                 PUCUnionWorkflow(mxargs, wdistr).run()
             case 'puc2pidc':
                 ContextWorkflow(mxargs, wdistr).run()
             case 'cluster_union':
                 ClusterUnionWorkflow(mxargs, wdistr).run()
+            case 'cluster_lmr_union':
+                ClusterUnionWorkflow(mxargs, wdistr).run(lmr_workflow=True)
             case _:
                 if comm_ifx.rank == 0:
                     print(f"Mode {rxmode} not implemented" )

@@ -643,11 +643,14 @@ class MISIPair(MRVInterface):
     si: DataPair[NDFloatArray]
     lmr: DataPair[NDFloatArray]
     #
-    lmr_ds: DataPair[LMRDataStructure]
+    lmr_ds: DataPair[LMRDataStructure] | DataPair[LMRSubsetDataStructure] 
     #
     ftype: NPDType = np.float32
     itype: NPDType = np.int32
     idx_type: NPDType = np.int64
+    #
+    subset_var: list[int] = []
+    subset_map: dict[int, int] = {}
 
 
     def __init__(
@@ -659,6 +662,7 @@ class MISIPair(MRVInterface):
         phist_dim: DataPair[IntegerT],
         psi: DataPair[NDFloatArray],
         plmr: DataPair[NDFloatArray],
+        subset_var: list[int] | NDIntArray | None = None,
     ):
         super().__init__()
         self.nobs, self.nvars = rshape
@@ -668,10 +672,34 @@ class MISIPair(MRVInterface):
         self.hist_dim = phist_dim
         self.si = psi
         self.lmr = plmr
-        self.lmr_ds  = DataPair[LMRDataStructure](
-            LMRDataStructure(self, int(pidx.first)),
-            LMRDataStructure(self, int(pidx.second))
-        )
+        self.subset_var =  []
+        self.subset_map =  {}
+        self._set_subset_var(subset_var)
+        self._init_lmr_ds()
+
+    def _set_subset_var(self, subset_var: list[int] | NDIntArray | None):
+        if subset_var is not None:
+            self.subset_var = [int(x) for x in subset_var]
+            self.subset_map = dict(zip(self.subset_var,
+                                       range(len(self.subset_var))))
+
+    def _init_lmr_ds(self):
+        if self.subset_var:
+            self.lmr_ds  = DataPair[LMRSubsetDataStructure](
+                LMRSubsetDataStructure(self, int(self.idx.first),
+                                       self.subset_var, self.subset_map),
+                LMRSubsetDataStructure(self, int(self.idx.second),
+                                        self.subset_var, self.subset_map)
+            )
+        else:
+            self.lmr_ds  = DataPair[LMRDataStructure](
+                LMRDataStructure(self, int(self.idx.first)),
+                LMRDataStructure(self, int(self.idx.second))
+            )
+
+    def init_subset_var(self, subset_var: list[int] | NDIntArray | None):
+        self._set_subset_var(subset_var)
+        self._init_lmr_ds()
 
     def _select_first_si(self): # pyright: ignore[reportUnusedFunction]
         return self.si.first
@@ -775,6 +803,23 @@ class MISIPair(MRVInterface):
                 misd.get_lmr_range(jbstart, jbend)
             )
         )
+
+    @t.override
+    def get_puc_factor(self, about: int, target:int):
+        if about == self.idx.first:
+            return self.lmr_ds.first.mi_factor(target)
+        return self.lmr_ds.second.mi_factor(target)
+
+    @t.override
+    def compute_lmr_puc(self, i:int, j:int):
+        if not self.subset_var:
+            return super().compute_lmr_puc(i, j)
+        mij = self.get_mi(i, j)
+        return (
+            (self.get_puc_factor(i, j) - (self.get_lmr_minsum(i, j) / mij) ) +
+            (self.get_puc_factor(j, i) - (self.get_lmr_minsum(j, i) / mij) )
+        )
+
 
 @t.final
 class MISIRangePair(MRVInterface):
@@ -896,14 +941,15 @@ class MISIRangePair(MRVInterface):
         self.range_si_start = DataPair(fi_hdim * self.nvars,
                                        se_hdim * self.nvars)
         self.lmr_ds  = DataPair([],[])
-        if subset_var:
-            self.subset_var = subset_var
-            self.nsubsets = len(subset_var)
-            self.subset_map = dict(zip(subset_var, range(self.nsubsets)))
-        if load_ds_flag:
-            self._load_ds()
+        self.init_subset_var(subset_var, load_ds_flag)
 
-    def _load_ds(self):
+    def _set_subset_var(self, subset_var: list[int] | NDIntArray | None):
+        if subset_var is not None:
+            self.subset_var = [int(x) for x in subset_var]
+            self.subset_map = dict(zip(self.subset_var,
+                                       range(len(self.subset_var))))
+
+    def _init_lmr_ds(self):
         if self.subset_var:
             self.lmr_ds  = DataPair(
                 [
@@ -922,6 +968,15 @@ class MISIRangePair(MRVInterface):
                 [LMRDataStructure(self, int(ix)) for ix in self.st_ranges.first],
                 [LMRDataStructure(self, int(jx)) for jx in self.st_ranges.second]
             )
+
+    def init_subset_var(
+            self,
+            subset_var: list[int] | NDIntArray | None, 
+            load_ds_flag: bool
+    ):
+        self._set_subset_var(subset_var)
+        if load_ds_flag: 
+            self._init_lmr_ds()
 
     @t.override
     def float_dtype(self) -> NPDType:
@@ -1100,4 +1155,22 @@ class MISIRangePair(MRVInterface):
         return (
             self.lmr_ds.first[dxa].lmr_minsum(target)
             if src_flag else self.lmr_ds.second[dxa].lmr_minsum(target)
+        )
+
+    @t.override
+    def get_puc_factor(self, about: int, target:int):
+        src_flag, dxa = self._var_loc(about)
+        return np.float32(
+            self.lmr_ds.first[dxa].mi_factor(target)
+            if src_flag else self.lmr_ds.second[dxa].mi_factor(target)
+        ).astype(self.float_dtype())
+
+    @t.override
+    def compute_lmr_puc(self, i:int, j:int):
+        if not self.subset_var:
+            return super().compute_lmr_puc(i, j)
+        mij = self.get_mi(i, j)
+        return (
+            (self.get_puc_factor(i, j) - (self.get_lmr_minsum(i, j) / mij) ) +
+            (self.get_puc_factor(j, i) - (self.get_lmr_minsum(j, i) / mij) )
         )
