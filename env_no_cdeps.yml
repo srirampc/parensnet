@@ -18,6 +18,7 @@ dependencies:
   - psutil
   #- pybind11
   - pydantic
+  - pytest
   - pyyaml
   - scikit-learn
   - scipy

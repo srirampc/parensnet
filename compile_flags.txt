@@ -1,0 +1,14 @@
+-DEIGEN_USE_BLAS
+-DPARENSNET_MODULE_NAME=_parensnetcpp
+-DPARENSNET_VERSION=1.0
+-D_parensnetcpp_EXPORTS
+-DUSE_PARALLEL_HDF5
+-I/project/conda/envs/pnc1/include/python3.12
+-I/usr/lib/x86_64-linux-gnu/openmpi/include
+-I/usr/lib/x86_64-linux-gnu/openmpi/include/openmpi
+-I/usr/include/hdf5/openmpi
+-Iinclude
+-Iext/eigen
+-Iext/mxx/include/
+-Iext/mxx/ext/cxx-prettyprint/
+-Iext/pybind11/include

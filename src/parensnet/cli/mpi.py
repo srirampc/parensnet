@@ -44,7 +44,7 @@ class ClusterUnionWorkflow:
 
     @Timer(name="ClusterUnionWorkflow::run", logger=None)
     def run(self, lmr_workflow:bool = False):
-        self.clust_labels = self.clust_labels[:3]
+        self.clust_labels = self.clust_labels[3:]
         mfiles = [f"{self.mxargs.wflow_dir}/misi_C{str(clabel)}.h5" for clabel in self.clust_labels]
         pfiles = [f"{self.mxargs.wflow_dir}/puc_C{str(clabel)}.h5" for clabel in self.clust_labels]
         #pdfiles = [f"{self.mxargs.temp_dir}/pidc_C{str(clabel)}.h5" for clabel in self.clust_labels]

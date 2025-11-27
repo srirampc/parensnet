@@ -815,6 +815,8 @@ class MISIPair(MRVInterface):
         if not self.subset_var:
             return super().compute_lmr_puc(i, j)
         mij = self.get_mi(i, j)
+        if mij <= 0:
+            return np.float32(0.0).astype(self.float_dtype())
         return (
             (self.get_puc_factor(i, j) - (self.get_lmr_minsum(i, j) / mij) ) +
             (self.get_puc_factor(j, i) - (self.get_lmr_minsum(j, i) / mij) )
@@ -1170,6 +1172,8 @@ class MISIRangePair(MRVInterface):
         if not self.subset_var:
             return super().compute_lmr_puc(i, j)
         mij = self.get_mi(i, j)
+        if mij <= 0:
+            return np.float32(0.0).astype(self.float_dtype())
         return (
             (self.get_puc_factor(i, j) - (self.get_lmr_minsum(i, j) / mij) ) +
             (self.get_puc_factor(j, i) - (self.get_lmr_minsum(j, i) / mij) )

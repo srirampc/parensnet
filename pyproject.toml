@@ -16,45 +16,56 @@
 # specific language governing permissions and limitations
 # under the License.
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["scikit-build-core>=0.10", "pybind11"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "parensnet"
-version = "0.1.0"
+version = "1.0"
 description = "Parallel Ensemble Network"
-authors = [{ name = "Sriram P Chockalingam", email = "srirampc@gatech.edu" }]
+authors = [{ name = "Sriram P C", email = "srirampc@gatech.edu" }]
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
-
-[tool.poetry]
 license = "Apache-2.0"
 keywords = ["Data-driven", "Computational Biology", "Gene Regulatory Networks"]
-packages = [{ include = "parensnet", from = "src" }]
+dependencies = [
+    "dask",
+    "devtools",
+    "h5py",
+    "numpy",
+    "pandas",
+    "polars",
+    "psutil",
+    "pydantic",
+    "pyyaml",
+    "scipy",
+    "scikit-learn",
+    "tqdm",
+    "anndata",
+    "arboreto",
+    "lightgbm",
+    "scanpy",
+    "xgboost",
+]
 
-[tool.poetry.dependencies]
-python = "^3.12"
-devtools = "^0.12"
-numpy = "^2.2"
-pandas = "^2.3"
-polars = "^1.31"
-pydantic = "^2.11"
-pyyaml = "^6.0"
-scipy = "^1.15"
-scikit-learn = "^1.7"
-#
-anndata = "^0.11"
-arboreto = "^0.1"
-lightgbm = "^4.6"
-scanpy = "^1.11"
-xgboost = "^3.0"
+[project.optional-dependencies]
+test = ["pytest"]
+
+
+[tool.scikit-build]
+# A table of defines to pass to CMake when configuring the project. Additive.
+cmake.define = { PARENSNET_PROJECT_NAME = "scement" }
+wheel.expand-macos-universal-tags = true
+cmake.build-type = "Release"
+cmake.verbose = true
+logging.level = "INFO"
+
 
 [tool.setuptools.packages.find]
 include = ["parensnet"]
 
 [tool.pyright]
-include = ["parens", "eval", "data"]
+include = ["parensnet", "eval", "data"]
 exclude = ["**/__pycache__"]
 
 [tool.black]
