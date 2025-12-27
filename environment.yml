@@ -30,6 +30,7 @@ dependencies:
   - scikit-learn
   - scipy
   - tqdm
+  - xlsxwriter
   #
   # pip dependencies
   - pip:

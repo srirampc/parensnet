@@ -1,0 +1,15 @@
+h5ad_file: "/localscratch/schockalingam6/tmp/rsc.5k/adata_lei.100k.5k.h5ad"
+misi_data_file: "/localscratch/schockalingam6/tmp/rsc.5k/adata.100k.5k.Sunionlmr.misidata.h5"
+puc_file: "/localscratch/schockalingam6/tmp/rsc.5k/adata.100k.5k.Sunionlmr_puc.h5"
+pidc_file: "/localscratch/schockalingam6/tmp/rsc.5k/adata.100k.5k.Sunionlmr_pidc.h5"
+nrounds: 6
+nsamples: 320
+nobs: 0
+nvars: 0
+wflow_dir: "/localscratch/schockalingam6/tmp/rsc.5k/Sunionlmr"
+#mode: "samples_ranges"
+mode:
+  #- "misi"
+  - "cluster_lmr_union"
+save_nodes: False
+save_node_pairs: True

@@ -1,0 +1,17 @@
+h5ad_file: "/localscratch/schockalingam6/tmp/rsc.10k/adata.100k.10k.h5ad"
+misi_data_file: "/localscratch/schockalingam6/tmp/rsc.10k/adata.100k.10k.misidata.h5"
+nodes_pickle: "/localscratch/schockalingam6/tmp/rsc.10k/adata.100k.10k.nodes.pickle"
+nodes_pairs_pickle: "/localscratch/schockalingam6/tmp/rsc.10k/adata.100k.10k.nodes_pairs.pickle"
+puc_file: "/localscratch/schockalingam6/tmp/rsc.10k/adata.100k.10k.S2x5p_puc.h5"
+pidc_file: "/localscratch/schockalingam6/tmp/rsc.10k/adata.100k.10k.SQ2x5p_pidc.h5"
+nrounds: 2
+nsamples: 500
+nobs: 0
+nvars: 0
+#mode: "samples_ranges"
+mode:
+  - "samples_ranges"
+  - "puc2pidc"
+#quantile_filter: 0.3
+save_nodes: False
+save_node_pairs: True

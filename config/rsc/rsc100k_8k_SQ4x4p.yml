@@ -2,9 +2,9 @@ h5ad_file: "/localscratch/schockalingam6/tmp/rsc.8k/adata_lei.100k.8k.h5ad"
 misi_data_file: "/localscratch/schockalingam6/tmp/rsc.8k/adata.100k.8k.misidata.h5"
 nodes_pickle: "/localscratch/schockalingam6/tmp/rsc.8k/adata.100k.8k.nodes.pickle"
 nodes_pairs_pickle: "/localscratch/schockalingam6/tmp/rsc.8k/adata.100k.8k.nodes_pairs.pickle"
-puc_file: "/localscratch/schockalingam6/tmp/rsc.8k/adata.100k.8k.S6x4p_puc.h5"
-pidc_file: "/localscratch/schockalingam6/tmp/rsc.8k/adata.100k.8k.SQ6x4p_pidc.h5"
-nrounds: 6
+puc_file: "/localscratch/schockalingam6/tmp/rsc.8k/adata.100k.8k.S4x4p_puc.h5"
+pidc_file: "/localscratch/schockalingam6/tmp/rsc.8k/adata.100k.8k.SQ4x4p_pidc.h5"
+nrounds: 4
 nsamples: 320
 nobs: 0
 nvars: 0

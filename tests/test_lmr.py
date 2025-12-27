@@ -83,7 +83,7 @@ def test_a_pair_full_lmr(ltdata: LMRTestData):
         mij = mpair.get_mi(i, j)
         pucij = mpair.accumulate_redundancies(i, j, None)
         lmrij = mpair.compute_lmr_puc(i, j)
-        print("MPair : " , mij, pucij, lmrij)
+        print("MPair : " , i, j, mij, pucij, lmrij)
         assert_almost_equal(pucij, lmrij, decimal=3)
 
 def test_b_range_pair_full_lmr(ltdata: LMRTestData):
